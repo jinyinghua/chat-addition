@@ -62,13 +62,12 @@ const handler = createMcpHandler(
       }
     );
   },
-  {},
   {
-    basePath: '/api',
-    serverInfo: {
-      name: 'uapi-pro-search-server',
-      version: '1.0.0'
-    }
+    name: 'uapi-pro-search-server',
+    version: '1.0.0'
+  },
+  {
+    basePath: '/api'
   }
 );
 
@@ -108,7 +107,7 @@ const verifyApiKey = async (
   return {
     token: bearerToken,
     scopes: ['search'], // 可以根据token设置不同的权限
-    clientId: `user-${bearerToken.slice(0, 8)}`, // 使用token前8位作为用户标识
+    clientId: `user-${bearerToken.slice(0, 8)}`,
     extra: {
       authenticatedAt: new Date().toISOString(),
       tokenPrefix: bearerToken.slice(0, 8) + '...'
@@ -118,9 +117,9 @@ const verifyApiKey = async (
 
 // 包装handler，添加认证
 const authHandler = withMcpAuth(handler, verifyApiKey, {
-  required: true, // 强制要求认证
-  requiredScopes: ['search'], // 要求的权限范围
-  resourceMetadataPath: '/.well-known/oauth-protected-resource' // OAuth元数据路径
+  required: true,
+  requiredScopes: ['search'],
+  resourceMetadataPath: '/.well-known/oauth-protected-resource'
 });
 
 export { authHandler as GET, authHandler as POST, authHandler as DELETE };
