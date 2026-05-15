@@ -1,12 +1,10 @@
 import { z } from 'zod';
 import { createMcpHandler, withMcpAuth } from 'mcp-handler';
-import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { searchUapiPro } from '@/lib/uapi-search';
 
-// 创建MCP处理器
 const handler = createMcpHandler(
   (server) => {
-    // 注册搜索工具
     server.tool(
       'search_web',
       '使用UAPI Pro搜索API进行智能网页搜索',
@@ -20,7 +18,6 @@ const handler = createMcpHandler(
       },
       async ({ query, site, filetype, fetch_full, sort, time_range }, { authInfo }) => {
         try {
-          // 从authInfo中获取用户信息（如果需要的话）
           const userId = authInfo?.clientId || 'anonymous';
           void userId;
 
@@ -33,19 +30,16 @@ const handler = createMcpHandler(
             time_range
           });
 
-          // 格式化搜索结果为MCP响应
-          const formattedResults = result.results.map((item, index) => ({
-            type: 'text' as const,
-            text: `**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`
-          })) as { type: 'text'; text: string }[];
-
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `搜索"${query}"完成，找到 ${result.total_results} 个结果，耗时 ${result.process_time_ms}ms`
+                text: `搜索“${query}”完成，找到 ${result.total_results} 个结果，耗时 ${result.process_time_ms}ms`
               },
-              ...formattedResults
+              ...result.results.map((item, index) => ({
+                type: 'text' as const,
+                text: `**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`
+              }))
             ]
           };
         } catch (error) {
@@ -71,16 +65,14 @@ const handler = createMcpHandler(
   }
 );
 
-// API key验证函数
 const verifyApiKey = async (
   req: Request,
   bearerToken?: string,
 ): Promise<AuthInfo | undefined> => {
   void req;
-  // 从环境变量获取有效的API keys
-  const validApiKeys = process.env.MCP_API_KEYS?.split(',') || [];
 
-  // 如果没有配置APIkeys，则允许所有请求（开发模式）
+  const validApiKeys = process.env.MCP_API_KEYS?.split(',').map((key) => key.trim()).filter(Boolean) || [];
+
   if (validApiKeys.length === 0) {
     console.warn('⚠️ 没有配置MCP_API_KEYS环境变量，允许所有请求');
     return {
@@ -91,31 +83,25 @@ const verifyApiKey = async (
     };
   }
 
-  // 检查Bearer token
   if (!bearerToken) {
-    return undefined; // 返回undefined表示认证失败
+    return undefined;
   }
 
-  // 验证token是否在有效列表中
-  const isValid = validApiKeys.includes(bearerToken);
-
-  if (!isValid) {
-    return undefined; // 认证失败
+  if (!validApiKeys.includes(bearerToken)) {
+    return undefined;
   }
 
-  // 认证成功，返回AuthInfo
   return {
     token: bearerToken,
-    scopes: ['search'], // 可以根据token设置不同的权限
     clientId: `user-${bearerToken.slice(0, 8)}`,
+    scopes: ['search'],
     extra: {
       authenticatedAt: new Date().toISOString(),
-      tokenPrefix: bearerToken.slice(0, 8) + '...'
+      tokenPrefix: `${bearerToken.slice(0, 8)}...`
     }
   };
 };
 
-// 包装handler，添加认证
 const authHandler = withMcpAuth(handler, verifyApiKey, {
   required: true,
   requiredScopes: ['search'],
