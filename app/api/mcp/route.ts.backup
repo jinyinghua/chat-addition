@@ -34,14 +34,14 @@ const handler = createMcpHandler(
 
           // 格式化搜索结果为MCP响应
           const formattedResults = result.results.map((item, index) => ({
-            type: 'text' as const,
+            type: 'text',
             text: `**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`
           }));
 
           return {
             content: [
               {
-                type: 'text' as const,
+                type: 'text',
                 text: `搜索"${query}"完成，找到 ${result.total_results} 个结果，耗时 ${result.process_time_ms}ms`
               },
               ...formattedResults
@@ -51,7 +51,7 @@ const handler = createMcpHandler(
           return {
             content: [
               {
-                type: 'text' as const,
+                type: 'text',
                 text: `搜索失败: ${error instanceof Error ? error.message : '未知错误'}`
               }
             ],
