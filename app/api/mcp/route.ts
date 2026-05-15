@@ -22,7 +22,8 @@ const handler = createMcpHandler(
         try {
           // 从authInfo中获取用户信息（如果需要的话）
           const userId = authInfo?.clientId || 'anonymous';
-          
+          void userId;
+
           const result = await searchUapiPro({
             query,
             site,
@@ -60,15 +61,15 @@ const handler = createMcpHandler(
         }
       }
     );
-
-    // 添加服务器信息
-    server.serverInfo = {
-      name: 'uapi-pro-search-server',
-      version: '1.0.0'
-    };
   },
   {},
-  { basePath: '/api' }
+  {
+    basePath: '/api',
+    serverInfo: {
+      name: 'uapi-pro-search-server',
+      version: '1.0.0'
+    }
+  }
 );
 
 // API key验证函数
@@ -76,10 +77,11 @@ const verifyApiKey = async (
   req: Request,
   bearerToken?: string,
 ): Promise<AuthInfo | undefined> => {
+  void req;
   // 从环境变量获取有效的API keys
   const validApiKeys = process.env.MCP_API_KEYS?.split(',') || [];
-  
-  // 如果没有配置API keys，则允许所有请求（开发模式）
+
+  // 如果没有配置APIkeys，则允许所有请求（开发模式）
   if (validApiKeys.length === 0) {
     console.warn('⚠️ 没有配置MCP_API_KEYS环境变量，允许所有请求');
     return {
@@ -97,7 +99,7 @@ const verifyApiKey = async (
 
   // 验证token是否在有效列表中
   const isValid = validApiKeys.includes(bearerToken);
-  
+
   if (!isValid) {
     return undefined; // 认证失败
   }
