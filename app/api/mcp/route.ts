@@ -36,7 +36,7 @@ const handler = createMcpHandler(
           const formattedResults = result.results.map((item, index) => ({
             type: 'text' as const,
             text: `**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`
-          }));
+          })) as { type: 'text'; text: string }[];
 
           return {
             content: [
