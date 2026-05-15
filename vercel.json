@@ -3,10 +3,5 @@
     "app/api/mcp/route.ts": {
       "maxDuration": 30
     }
-  },
-  "env": {
-    "UAPI_PRO_API_KEY": "@uapi-pro-api-key",
-    "MCP_API_KEYS": "@mcp-api-keys",
-    "NEXT_PUBLIC_APP_URL": "@app-url"
   }
 }
