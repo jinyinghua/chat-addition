@@ -56,10 +56,7 @@ const handler = createMcpHandler(
       }
     );
   },
-  {
-    name: 'uapi-pro-search-server',
-    version: '1.0.0'
-  },
+  {},
   {
     basePath: '/api'
   }
