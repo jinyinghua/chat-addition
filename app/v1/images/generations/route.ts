@@ -1,6 +1,6 @@
 import { getAuthTokenFromRequest, requireApiKey } from '@/lib/session-manager';
-import { extractPromptAndImages, parseDataUri } from '@/lib/chatgpt-proxy';
-import { buildOpenAiImageGenerationResponse, buildImageTimeoutResponse, createOrGetImageJob, ensureImageJobStarted, waitForImageJob } from '@/lib/image-job-service';
+import { extractPromptAndImages } from '@/lib/chatgpt-proxy';
+import { buildOpenAiImageGenerationResponse, buildImageTimeoutResponse, createOrGetImageJob, ensureImageJobStarted } from '@/lib/image-job-service';
 import { getPublicBaseUrl } from '@/lib/app-url';
 
 export const runtime = 'nodejs';
@@ -62,16 +62,19 @@ export async function POST(request: Request) {
     inputImages,
   });
 
-  void ensureImageJobStarted(job);
-  const waited = await waitForImageJob(job.id, 240000);
+  console.log(`[images] start job id=${job.id} model=${model}`);
+  const waited = await ensureImageJobStarted(job);
   if (!waited || waited.status === 'queued' || waited.status === 'running') {
+    console.warn(`[images] job still pending id=${job.id}`);
     return buildImageTimeoutResponse(job, request);
   }
   if (waited.status === 'failed') {
+    console.warn(`[images] job failed id=${waited.id} error=${waited.error || ''}`);
     return Response.json({ detail: waited.error || 'image generation failed' }, { status: 502, headers: { 'X-Image-Job-Id': waited.id } });
   }
 
   const baseUrl = getPublicBaseUrl(request);
+  console.log(`[images] job succeeded id=${waited.id} assets=${waited.result?.assets?.length || 0}`);
   return Response.json(buildOpenAiImageGenerationResponse(waited, baseUrl, responseFormat), {
     headers: { 'X-Image-Job-Id': waited.id },
   });

@@ -1,7 +1,7 @@
 import { getAuthTokenFromRequest, requireApiKey, tokenManager } from '@/lib/session-manager';
-import { buildConversationBody, buildOpenAiStreamChunk, buildTextConversationBody, extractPromptAndImages, IMAGE_MODELS, DEFAULT_MODEL, BASE_URL, WEB_USER_AGENT } from '@/lib/chatgpt-proxy';
+import { buildOpenAiStreamChunk, buildTextConversationBody, extractPromptAndImages, IMAGE_MODELS, DEFAULT_MODEL, BASE_URL, WEB_USER_AGENT } from '@/lib/chatgpt-proxy';
 import { generateRequirementsToken, solvePow } from '@/lib/chatgpt-sentinel';
-import { buildChatCompletionImageResponse, buildImageTimeoutResponse, createOrGetImageJob, ensureImageJobStarted, waitForImageJob } from '@/lib/image-job-service';
+import { buildChatCompletionImageResponse, buildImageTimeoutResponse, createOrGetImageJob, ensureImageJobStarted } from '@/lib/image-job-service';
 import { getPublicBaseUrl } from '@/lib/app-url';
 
 export const runtime = 'nodejs';
@@ -163,14 +163,14 @@ export async function POST(request: Request) {
       inputImages: images,
     });
 
-    void ensureImageJobStarted(job);
-
-    if (stream) {
-      return new Response(
-        new ReadableStream({
-          async start(controller) {
-            const waited = await waitForImageJob(job.id, 240000);
-            if (!waited || waited.status === 'queued' || waited.status === 'running') {
+    console.log(`[chat-image] start job id=${job.id} stream=${stream}`);
+    const waited = await ensureImageJobStarted(job);
+    if (!waited || waited.status === 'queued' || waited.status === 'running') {
+      console.warn(`[chat-image] pending job id=${job.id}`);
+      if (stream) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
               const msg = 'Image generation is still running. Retry the same request later.';
               const chunk = buildOpenAiStreamChunk({
                 id: `chatcmpl-${crypto.randomUUID().slice(0, 12)}`,
@@ -182,18 +182,51 @@ export async function POST(request: Request) {
               controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
               controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
               controller.close();
-              return;
-            }
-            if (waited.status === 'failed') {
+            },
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              Connection: 'keep-alive',
+              'X-Image-Job-Id': job.id,
+            },
+          },
+        );
+      }
+      return buildImageTimeoutResponse(job, request);
+    }
+    if (waited.status === 'failed') {
+      console.warn(`[chat-image] failed job id=${waited.id} error=${waited.error || ''}`);
+      if (stream) {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
               controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: { message: waited.error || 'image generation failed' } })}\n\n`));
               controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
               controller.close();
-              return;
-            }
+            },
+          }),
+          {
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              Connection: 'keep-alive',
+              'X-Image-Job-Id': waited.id,
+            },
+          },
+        );
+      }
+      return Response.json({ error: { message: waited.error || 'image generation failed' } }, { status: 502, headers: { 'X-Image-Job-Id': waited.id } });
+    }
 
-            const baseUrl = getPublicBaseUrl(request);
-            const response = buildChatCompletionImageResponse(waited, model, baseUrl);
-            const content = String(response.choices[0]?.message?.content || '');
+    const baseUrl = getPublicBaseUrl(request);
+    if (stream) {
+      const response = buildChatCompletionImageResponse(waited, model, baseUrl);
+      const content = String(response.choices[0]?.message?.content || '');
+      return new Response(
+        new ReadableStream({
+          start(controller) {
             const chunk = buildOpenAiStreamChunk({
               id: response.id,
               created: response.created,
@@ -211,21 +244,13 @@ export async function POST(request: Request) {
             'Content-Type': 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache, no-transform',
             Connection: 'keep-alive',
-            'X-Image-Job-Id': job.id,
+            'X-Image-Job-Id': waited.id,
           },
         },
       );
     }
 
-    const waited = await waitForImageJob(job.id, 240000);
-    if (!waited || waited.status === 'queued' || waited.status === 'running') {
-      return buildImageTimeoutResponse(job, request);
-    }
-    if (waited.status === 'failed') {
-      return Response.json({ error: { message: waited.error || 'image generation failed' } }, { status: 502, headers: { 'X-Image-Job-Id': waited.id } });
-    }
-
-    const baseUrl = getPublicBaseUrl(request);
+    console.log(`[chat-image] succeeded job id=${waited.id} assets=${waited.result?.assets?.length || 0}`);
     return Response.json(buildChatCompletionImageResponse(waited, model, baseUrl), {
       headers: { 'X-Image-Job-Id': waited.id },
     });
