@@ -3,6 +3,30 @@ import { createMcpHandler, withMcpAuth } from 'mcp-handler';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { searchUapiPro } from '@/lib/uapi-search';
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+async function fetchImageAsBase64(imageUrl: string) {
+  const response = await fetch(imageUrl, {
+    headers: {
+      'User-Agent': 'uapi-pro-mcp-server/1.0'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`图片下载失败: ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const arrayBuffer = await response.arrayBuffer();
+
+  if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error(`图片过大，当前限制 ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)}MB`);
+  }
+
+  const base64 = Buffer.from(arrayBuffer).toString('base64');
+  return { contentType, base64 };
+}
+
 const handler = createMcpHandler(
   (server) => {
     server.tool(
@@ -48,6 +72,42 @@ const handler = createMcpHandler(
               {
                 type: 'text' as const,
                 text: `搜索失败: ${error instanceof Error ? error.message : '未知错误'}`
+              }
+            ],
+            isError: true
+          };
+        }
+      }
+    );
+
+    server.tool(
+      'read_image',
+      '读取一个图片链接并转换为模型可处理的图片数据',
+      {
+        image_url: z.string().url().describe('可公开访问的图片链接')
+      },
+      async ({ image_url }) => {
+        try {
+          const { contentType, base64 } = await fetchImageAsBase64(image_url);
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `图片读取成功: ${contentType}`
+              },
+              {
+                type: 'image' as const,
+                data: base64,
+                mimeType: contentType
+              }
+            ]
+          };
+        } catch (error) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `图片读取失败: ${error instanceof Error ? error.message : '未知错误'}`
               }
             ],
             isError: true
