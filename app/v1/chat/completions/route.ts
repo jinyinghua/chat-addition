@@ -67,7 +67,7 @@ async function callConversation(body: Record<string, unknown>, accessToken: stri
   return resp;
 }
 
-function parseAssistantTextFromEvent(event: Record<string, unknown>) {
+function extractAssistantFullTextFromEvent(event: Record<string, unknown>) {
   const message = (event.message && typeof event.message === 'object' ? event.message : undefined) as Record<string, unknown> | undefined;
   const nested = (event.v && typeof event.v === 'object' ? (event.v as Record<string, unknown>).message : undefined) as Record<string, unknown> | undefined;
   const msg = message || nested;
@@ -82,6 +82,16 @@ function parseAssistantTextFromEvent(event: Record<string, unknown>) {
   return parts.filter((p) => typeof p === 'string').join('');
 }
 
+function computeDelta(previousText: string, currentText: string) {
+  if (!currentText) return '';
+  if (!previousText) return currentText;
+  if (currentText === previousText) return '';
+  if (currentText.startsWith(previousText)) {
+    return currentText.slice(previousText.length);
+  }
+  return currentText;
+}
+
 async function streamConversationToOpenAI(body: Record<string, unknown>, model: string, accessToken: string) {
   const upstream = await callConversation(body, accessToken);
   const reader = upstream.body!.getReader();
@@ -92,6 +102,7 @@ async function streamConversationToOpenAI(body: Record<string, unknown>, model: 
   return new ReadableStream({
     async start(controller) {
       let buffer = '';
+      let lastText = '';
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -110,9 +121,11 @@ async function streamConversationToOpenAI(body: Record<string, unknown>, model: 
             if (!payload.startsWith('{')) continue;
             try {
               const event = JSON.parse(payload) as Record<string, unknown>;
-              const text = parseAssistantTextFromEvent(event);
-              if (!text) continue;
-              const chunk = buildOpenAiStreamChunk({ id: cmplId, created, model, content: text });
+              const fullText = extractAssistantFullTextFromEvent(event);
+              const delta = computeDelta(lastText, fullText);
+              if (!delta) continue;
+              lastText = fullText;
+              const chunk = buildOpenAiStreamChunk({ id: cmplId, created, model, content: delta });
               controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
             } catch {
               continue;
@@ -283,7 +296,7 @@ export async function POST(request: Request) {
     const reader = upstream.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let content = '';
+    let latestText = '';
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -296,14 +309,15 @@ export async function POST(request: Request) {
         if (raw === '[DONE]' || !raw.startsWith('{')) continue;
         try {
           const event = JSON.parse(raw) as Record<string, unknown>;
-          content += parseAssistantTextFromEvent(event);
+          const fullText = extractAssistantFullTextFromEvent(event);
+          if (fullText) latestText = fullText;
         } catch {
           // ignore
         }
       }
     }
     reader.releaseLock();
-    console.log(`[chat] non-stream content length=${content.length}`);
+    console.log(`[chat] non-stream content length=${latestText.length}`);
 
     return Response.json({
       id: `chatcmpl-${crypto.randomUUID().slice(0, 12)}`,
@@ -313,7 +327,7 @@ export async function POST(request: Request) {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content },
+          message: { role: 'assistant', content: latestText },
           finish_reason: 'stop',
         },
       ],
