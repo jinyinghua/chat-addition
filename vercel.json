@@ -1,7 +1,19 @@
 {
   "functions": {
     "app/api/mcp/route.ts": {
-      "maxDuration": 30
+      "maxDuration": 300
+    },
+    "app/v1/chat/completions/route.ts": {
+      "maxDuration": 300
+    },
+    "app/v1/images/generations/route.ts": {
+      "maxDuration": 300
+    },
+    "app/v1/images/jobs/[jobId]/route.ts": {
+      "maxDuration": 60
+    },
+    "app/v1/images/jobs/[jobId]/files/[index]/route.ts": {
+      "maxDuration": 60
     }
   }
 }

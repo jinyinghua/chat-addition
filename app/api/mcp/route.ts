@@ -2,29 +2,20 @@ import { z } from 'zod';
 import { createMcpHandler, withMcpAuth } from 'mcp-handler';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { searchUapiPro } from '@/lib/uapi-search';
+import { fetchImageAsBase64 } from '@/lib/chatgpt-proxy';
+import { createOrGetImageJob, ensureImageJobStarted, waitForImageJob } from '@/lib/image-job-service';
+import { getPublicBaseUrl, buildImageJobFileUrl } from '@/lib/app-url';
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+type McpToolContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
 
-async function fetchImageAsBase64(imageUrl: string) {
-  const response = await fetch(imageUrl, {
-    headers: {
-      'User-Agent': 'uapi-pro-mcp-server/1.0'
-    }
-  });
+function textContent(text: string): McpToolContent {
+  return { type: 'text', text };
+}
 
-  if (!response.ok) {
-    throw new Error(`图片下载失败: ${response.status}`);
-  }
-
-  const contentType = response.headers.get('content-type') || 'application/octet-stream';
-  const arrayBuffer = await response.arrayBuffer();
-
-  if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) {
-    throw new Error(`图片过大，当前限制 ${Math.floor(MAX_IMAGE_BYTES / 1024 / 1024)}MB`);
-  }
-
-  const base64 = Buffer.from(arrayBuffer).toString('base64');
-  return { contentType, base64 };
+function imageContent(data: string, mimeType: string): McpToolContent {
+  return { type: 'image', data, mimeType };
 }
 
 const handler = createMcpHandler(
@@ -40,40 +31,20 @@ const handler = createMcpHandler(
         sort: z.enum(['relevance', 'date']).optional().default('relevance').describe('排序方式'),
         time_range: z.enum(['day', 'week', 'month', 'year']).optional().describe('时间范围过滤')
       },
-      async ({ query, site, filetype, fetch_full, sort, time_range }, { authInfo }) => {
+      async ({ query, site, filetype, fetch_full, sort, time_range }) => {
         try {
-          const userId = authInfo?.clientId || 'anonymous';
-          void userId;
-
-          const result = await searchUapiPro({
-            query,
-            site,
-            filetype,
-            fetch_full,
-            sort,
-            time_range
-          });
-
+          const result = await searchUapiPro({ query, site, filetype, fetch_full, sort, time_range });
           return {
             content: [
-              {
-                type: 'text' as const,
-                text: `搜索“${query}”完成，找到 ${result.total_results} 个结果，耗时 ${result.process_time_ms}ms`
-              },
-              ...result.results.map((item, index) => ({
-                type: 'text' as const,
-                text: `**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`
-              }))
+              textContent(`搜索“${query}”完成，找到 ${result.total_results} 个结果，耗时 ${result.process_time_ms}ms`),
+              ...result.results.map((item, index) =>
+                textContent(`**${index + 1}. ${item.title}**\n链接: ${item.url}\n来源: ${item.domain}\n摘要: ${item.snippet}${item.publish_time ? `\n发布时间: ${item.publish_time}` : ''}`)
+              )
             ]
           };
         } catch (error) {
           return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `搜索失败: ${error instanceof Error ? error.message : '未知错误'}`
-              }
-            ],
+            content: [textContent(`搜索失败: ${error instanceof Error ? error.message : '未知错误'}`)],
             isError: true
           };
         }
@@ -90,26 +61,72 @@ const handler = createMcpHandler(
         try {
           const { contentType, base64 } = await fetchImageAsBase64(image_url);
           return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `图片读取成功: ${contentType}`
-              },
-              {
-                type: 'image' as const,
-                data: base64,
-                mimeType: contentType
-              }
-            ]
+            content: [textContent(`图片读取成功: ${contentType}`), imageContent(base64, contentType)]
           };
         } catch (error) {
           return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `图片读取失败: ${error instanceof Error ? error.message : '未知错误'}`
-              }
-            ],
+            content: [textContent(`图片读取失败: ${error instanceof Error ? error.message : '未知错误'}`)],
+            isError: true
+          };
+        }
+      }
+    );
+
+    server.tool(
+      'generate_image',
+      '调用上游 gpt-image-2 生成图片，返回图片URL以及可直接给模型使用的图片数据',
+      {
+        prompt: z.string().describe('图片生成提示词'),
+        model: z.string().optional().default('gpt-image-2').describe('图片模型，默认 gpt-image-2'),
+        size: z.string().optional().default('auto').describe('图片尺寸'),
+        quality: z.string().optional().default('auto').describe('图片质量'),
+        background: z.string().optional().default('auto').describe('背景设置'),
+        n: z.number().int().min(1).max(4).optional().default(1).describe('生成数量')
+      },
+      async ({ prompt, model, size, quality, background, n }, extra) => {
+        try {
+          const token = extra.authInfo?.token || '';
+          const { job } = await createOrGetImageJob({
+            ownerToken: token,
+            model,
+            prompt,
+            size,
+            quality,
+            background,
+            responseFormat: 'url',
+            n,
+            inputImages: [],
+          });
+          await ensureImageJobStarted(job);
+          const waited = await waitForImageJob(job.id, 240000);
+          if (!waited || waited.status !== 'succeeded' || !waited.result) {
+            return {
+              content: [textContent(waited?.error || '图片生成未完成，请稍后重试')],
+              isError: true
+            };
+          }
+
+          const baseUrl = getPublicBaseUrl();
+          const content: McpToolContent[] = [];
+          content.push(
+            textContent(
+              `图片生成成功，共 ${waited.result.assets.length} 张。你可以把这些 URL 直接嵌入回答中。\n` +
+                waited.result.assets.map((_, index) => `${index + 1}. ${buildImageJobFileUrl(baseUrl, waited.id, index)}`).join('\n')
+            )
+          );
+
+          waited.result.assets.forEach((asset, index) => {
+            const url = buildImageJobFileUrl(baseUrl, waited.id, index);
+            content.push(textContent(`图片 ${index + 1} URL: ${url}`));
+            if (asset.b64Json) {
+              content.push(imageContent(asset.b64Json, asset.mimeType || 'image/png'));
+            }
+          });
+
+          return { content };
+        } catch (error) {
+          return {
+            content: [textContent(`图片生成失败: ${error instanceof Error ? error.message : '未知错误'}`)],
             isError: true
           };
         }
