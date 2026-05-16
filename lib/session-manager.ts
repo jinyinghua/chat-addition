@@ -35,10 +35,14 @@ export interface SessionSlot {
 
 let redisClient: Redis | null = null;
 
+function cleanEnv(name: string) {
+  return (process.env[name] || '').trim();
+}
+
 function getRedis() {
   if (redisClient) return redisClient;
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = cleanEnv('KV_REST_API_URL') || cleanEnv('UPSTASH_REDIS_REST_URL');
+  const token = cleanEnv('KV_REST_API_TOKEN') || cleanEnv('UPSTASH_REDIS_REST_TOKEN');
   if (!url || !token) return null;
   redisClient = new Redis({ url, token });
   return redisClient;
@@ -165,7 +169,7 @@ async function writeSessionsStore(items: Record<string, unknown>[]) {
 function getEnvSessionTokens(): string[] {
   const tokens: string[] = [];
   for (let i = 0; i < 10; i += 1) {
-    const token = (process.env[`SESSION_TOKEN_${i}`] || '').trim();
+    const token = cleanEnv(`SESSION_TOKEN_${i}`);
     if (token) tokens.push(token);
   }
   return tokens;
@@ -320,6 +324,7 @@ export class TokenManager {
 
   async getValidToken() {
     await this.ensureReady();
+    console.log(`[TokenMgr] getValidToken start; sessions=${this.sessions.length}`);
     if (!this.sessions.length) {
       throw new Error('No sessions available. Add one via /auth/session');
     }
@@ -328,24 +333,30 @@ export class TokenManager {
     for (let i = 0; i < count; i += 1) {
       const slot = this.sessions[this.currentIdx % count];
       this.currentIdx += 1;
+      console.log(`[TokenMgr] checking session sid=${slot.sid} disabled=${slot.disabled} errors=${slot.error_count}`);
 
       if (slot.disabled || slot.error_count >= MAX_ERROR_COUNT) continue;
 
       if ((!slot.access_token) || (slot.expires_at > 0 && Date.now() / 1000 >= slot.expires_at - 120)) {
+        console.log(`[TokenMgr] refreshing session sid=${slot.sid}`);
         const ok = await this.refreshSlot(slot);
+        console.log(`[TokenMgr] refresh result sid=${slot.sid} ok=${ok} last_error=${slot.last_error}`);
         if (!ok) continue;
       }
 
       this.current = slot;
+      console.log(`[TokenMgr] selected session sid=${slot.sid}`);
       return slot.access_token;
     }
 
     for (const slot of this.sessions) {
       if (slot.disabled) continue;
       slot.error_count = 0;
+      console.log(`[TokenMgr] fallback refresh sid=${slot.sid}`);
       const ok = await this.refreshSlot(slot);
       if (ok) {
         this.current = slot;
+        console.log(`[TokenMgr] fallback selected sid=${slot.sid}`);
         return slot.access_token;
       }
     }
@@ -361,6 +372,7 @@ export class TokenManager {
     }
 
     try {
+      console.log(`[TokenMgr] refreshSlot request sid=${slot.sid}`);
       const resp = await fetch('https://chatgpt.com/api/auth/session', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
@@ -370,6 +382,7 @@ export class TokenManager {
         },
       });
 
+      console.log(`[TokenMgr] refreshSlot response sid=${slot.sid} status=${resp.status}`);
       if (!resp.ok) {
         slot.error_count += 1;
         slot.last_error = `refresh HTTP ${resp.status}`;
@@ -400,6 +413,7 @@ export class TokenManager {
     } catch (error) {
       slot.error_count += 1;
       slot.last_error = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+      console.warn(`[TokenMgr] refreshSlot exception sid=${slot.sid}:`, error);
       return false;
     }
   }

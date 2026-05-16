@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 async function getSentinelTokens(accessToken: string) {
+  console.log('[chat] getSentinelTokens start');
   const reqToken = generateRequirementsToken();
   const resp = await fetch(`${BASE_URL}/sentinel/chat-requirements`, {
     method: 'POST',
@@ -21,6 +22,7 @@ async function getSentinelTokens(accessToken: string) {
     body: JSON.stringify({ p: reqToken }),
   });
 
+  console.log(`[chat] chat-requirements status=${resp.status}`);
   if (!resp.ok) {
     throw new Error(`chat-requirements failed: ${resp.status}`);
   }
@@ -31,10 +33,12 @@ async function getSentinelTokens(accessToken: string) {
   const proofToken = pow.required && typeof pow.seed === 'string' && typeof pow.difficulty === 'string'
     ? solvePow(pow.seed, pow.difficulty)
     : '';
+  console.log(`[chat] getSentinelTokens done chatToken=${chatToken ? 'yes' : 'no'} proof=${proofToken ? 'yes' : 'no'}`);
   return { chatToken, proofToken };
 }
 
 async function callConversation(body: Record<string, unknown>, accessToken: string) {
+  console.log('[chat] callConversation start');
   const { chatToken, proofToken } = await getSentinelTokens(accessToken);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
@@ -53,7 +57,10 @@ async function callConversation(body: Record<string, unknown>, accessToken: stri
     body: JSON.stringify(body),
   });
 
+  console.log(`[chat] conversation status=${resp.status}`);
   if (!resp.ok || !resp.body) {
+    const text = await resp.text().catch(() => '');
+    console.warn('[chat] conversation failed body=', text.slice(0, 500));
     throw new Error(`upstream conversation failed: ${resp.status}`);
   }
 
@@ -140,6 +147,7 @@ export async function POST(request: Request) {
   const stream = payload.stream === true;
   const messages = Array.isArray(payload.messages) ? (payload.messages as Array<Record<string, unknown>>) : [];
   const { prompt, images } = extractPromptAndImages(messages as never[]);
+  console.log(`[chat] POST /v1/chat/completions model=${model} stream=${stream} messages=${messages.length}`);
 
   if (IMAGE_MODELS.has(model)) {
     const ownerToken = getAuthTokenFromRequest(request);
@@ -225,8 +233,11 @@ export async function POST(request: Request) {
 
   let accessToken = '';
   try {
+    console.log('[chat] getValidToken start');
     accessToken = await tokenManager.getValidToken();
+    console.log('[chat] getValidToken done');
   } catch (error) {
+    console.warn('[chat] getValidToken failed:', error);
     return Response.json({ error: { message: error instanceof Error ? error.message : String(error) } }, { status: 502 });
   }
 
@@ -242,43 +253,49 @@ export async function POST(request: Request) {
     });
   }
 
-  const upstream = await callConversation(body as Record<string, unknown>, accessToken);
-  const reader = upstream.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let content = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      const raw = line.slice(6).trim();
-      if (raw === '[DONE]' || !raw.startsWith('{')) continue;
-      try {
-        const event = JSON.parse(raw) as Record<string, unknown>;
-        content += parseAssistantTextFromEvent(event);
-      } catch {
-        // ignore
+  try {
+    const upstream = await callConversation(body as Record<string, unknown>, accessToken);
+    const reader = upstream.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const raw = line.slice(6).trim();
+        if (raw === '[DONE]' || !raw.startsWith('{')) continue;
+        try {
+          const event = JSON.parse(raw) as Record<string, unknown>;
+          content += parseAssistantTextFromEvent(event);
+        } catch {
+          // ignore
+        }
       }
     }
-  }
-  reader.releaseLock();
+    reader.releaseLock();
+    console.log(`[chat] non-stream content length=${content.length}`);
 
-  return Response.json({
-    id: `chatcmpl-${crypto.randomUUID().slice(0, 12)}`,
-    object: 'chat.completion',
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [
-      {
-        index: 0,
-        message: { role: 'assistant', content },
-        finish_reason: 'stop',
-      },
-    ],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  });
+    return Response.json({
+      id: `chatcmpl-${crypto.randomUUID().slice(0, 12)}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    });
+  } catch (error) {
+    console.warn('[chat] non-stream conversation failed:', error);
+    return Response.json({ error: { message: error instanceof Error ? error.message : String(error) } }, { status: 502 });
+  }
 }
