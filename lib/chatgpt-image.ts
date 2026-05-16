@@ -1,4 +1,4 @@
-import { BASE_URL, DEFAULT_MODEL, IMAGE_MODELS, SENTINEL_USER_AGENT, buildConversationBody, buildMultimodalBody } from '@/lib/chatgpt-proxy';
+import { BASE_URL, SENTINEL_USER_AGENT, buildConversationBody, buildMultimodalBody } from '@/lib/chatgpt-proxy';
 import { generateRequirementsToken, solvePow } from '@/lib/chatgpt-sentinel';
 import { persistImageBytes } from '@/lib/blob-store';
 import { tokenManager } from '@/lib/session-manager';
@@ -442,17 +442,22 @@ export async function handleImageViaConversation(params: {
   if (proofToken) headers['openai-sentinel-proof-token'] = proofToken;
 
   const parentMessageId = String(((body.messages as Array<Record<string, unknown>>)[0] || {}).id || '');
-  for (const path of ['/f/conversation', '/conversation']) {
+
+  const tryPath = async (path: '/f/conversation' | '/conversation') => {
+    const routeLabel = path.split('/').pop() || path;
+    console.log(`[conv] POST ${BASE_URL}${path}`);
     const resp = await fetch(`${BASE_URL}${path}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
-      if ((resp.status === 403 || resp.status === 404) && path === '/f/conversation') continue;
-      throw new Error(`${path} returned ${resp.status}`);
+      console.warn(`[conv] ${routeLabel} returned ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 512)}`);
+      return { ok: false, images: [] as UpstreamImage[], conversationId: '', asyncMode: false, chunks: [] as string[] };
     }
-    if (!resp.body) throw new Error('No response body');
+    if (!resp.body) {
+      throw new Error('No response body');
+    }
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -500,12 +505,27 @@ export async function handleImageViaConversation(params: {
       mergeImages(images, reparsed);
     }
     if (images.length) {
-      return buildImagesResponse(images.slice(0, params.n), params.responseFormat);
+      return { ok: true, images, conversationId, asyncMode, chunks };
     }
     if (asyncMode && conversationId) {
       images = await pollConversationForImages({ accessToken, deviceId, conversationId, parentMessageId, persistPrefix: params.persistPrefix });
-      if (images.length) return buildImagesResponse(images.slice(0, params.n), params.responseFormat);
+      if (images.length) return { ok: true, images, conversationId, asyncMode, chunks };
     }
+    return { ok: true, images, conversationId, asyncMode, chunks };
+  };
+
+  const first = await tryPath('/f/conversation');
+  if (first.ok) {
+    if (first.images.length) {
+      return buildImagesResponse(first.images.slice(0, params.n), params.responseFormat);
+    }
+    console.warn('[conv] /f/conversation returned 200 but no images; not falling back to /conversation immediately');
+    throw new Error('No images in /f response');
+  }
+
+  const second = await tryPath('/conversation');
+  if (second.ok && second.images.length) {
+    return buildImagesResponse(second.images.slice(0, params.n), params.responseFormat);
   }
 
   throw new Error('No images in response');
