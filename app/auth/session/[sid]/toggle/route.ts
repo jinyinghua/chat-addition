@@ -16,7 +16,7 @@ export async function POST(request: Request, context: { params: Promise<{ sid: s
   }
 
   const disabled = !!(body && typeof body === 'object' && 'disabled' in body ? (body as Record<string, unknown>).disabled : false);
-  if (!tokenManager.toggleSession(sid, disabled)) {
+  if (!(await tokenManager.toggleSession(sid, disabled))) {
     return Response.json({ detail: `Session ${sid} not found` }, { status: 404 });
   }
 

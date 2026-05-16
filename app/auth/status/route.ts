@@ -7,7 +7,7 @@ export async function GET(request: Request) {
   const authResult = requireApiKey(request);
   if (authResult) return authResult;
 
-  const sessions = tokenManager.getAllStatus();
+  const sessions = await tokenManager.getAllStatus();
   const healthy = sessions.filter((s) => s.is_healthy).length;
 
   return Response.json({

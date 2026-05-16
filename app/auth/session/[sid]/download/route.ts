@@ -7,6 +7,7 @@ export async function GET(request: Request, context: { params: Promise<{ sid: st
   const authResult = requireApiKey(request);
   if (authResult) return authResult;
 
+  await tokenManager.getAllStatus();
   const { sid } = await context.params;
   const session = tokenManager.sessions.find((s) => s.sid === sid);
   if (!session || !session.raw_session) {

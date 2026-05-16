@@ -1,3 +1,4 @@
+import { Redis } from '@upstash/redis';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +8,7 @@ const SESSION_FILE = process.env.SESSION_FILE || path.join(DATA_DIR, 'sessions.j
 const MAX_ERROR_COUNT = 5;
 const DEVICE_ID = process.env.OAI_DEVICE_ID || '46600ebf-c112-4824-9fa7-bd0636febef8';
 const INSTALLATION_NAMESPACE = '6d0ab975-7f88-4ef4-9466-3f9047d5064d';
+const SESSION_STORE_KEY = 'uapi:sessions';
 
 const AUTH_WHITELIST = new Set([
   '/',
@@ -29,6 +31,17 @@ export interface SessionSlot {
   error_count: number;
   last_error: string;
   disabled: boolean;
+}
+
+let redisClient: Redis | null = null;
+
+function getRedis() {
+  if (redisClient) return redisClient;
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  redisClient = new Redis({ url, token });
+  return redisClient;
 }
 
 function ensureDataDir() {
@@ -107,7 +120,7 @@ function readSessionsFile(): Record<string, unknown>[] {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((v) => v && typeof v === 'object') : [parsed];
   } catch (error) {
-    console.warn('[TokenMgr] failed to load sessions:', error);
+    console.warn('[TokenMgr] failed to load sessions from file:', error);
     return [];
   }
 }
@@ -117,8 +130,36 @@ function writeSessionsFile(items: Record<string, unknown>[]) {
     ensureDataDir();
     fs.writeFileSync(SESSION_FILE, JSON.stringify(items, null, 2), 'utf8');
   } catch (error) {
-    console.warn('[TokenMgr] failed to save sessions:', error);
+    console.warn('[TokenMgr] failed to save sessions to file:', error);
   }
+}
+
+async function readSessionsStore(): Promise<Record<string, unknown>[]> {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const raw = await redis.get<Record<string, unknown>[]>(SESSION_STORE_KEY);
+      if (Array.isArray(raw)) {
+        return raw.filter((v) => v && typeof v === 'object');
+      }
+    } catch (error) {
+      console.warn('[TokenMgr] failed to load sessions from redis:', error);
+    }
+  }
+  return readSessionsFile();
+}
+
+async function writeSessionsStore(items: Record<string, unknown>[]) {
+  const redis = getRedis();
+  if (redis) {
+    try {
+      await redis.set(SESSION_STORE_KEY, items);
+      return;
+    } catch (error) {
+      console.warn('[TokenMgr] failed to save sessions to redis:', error);
+    }
+  }
+  writeSessionsFile(items);
 }
 
 function getEnvSessionTokens(): string[] {
@@ -135,11 +176,17 @@ export class TokenManager {
   deviceId = DEVICE_ID;
   private currentIdx = 0;
   private current: SessionSlot | null = null;
+  private ready: Promise<void>;
 
   constructor() {
     ensureDataDir();
-    this.loadFromDisk();
+    this.ready = this.initialize();
+  }
+
+  private async initialize() {
+    await this.loadFromStore();
     this.loadFromEnv();
+    await this.persist();
   }
 
   private createSlot(data: Record<string, unknown>): SessionSlot {
@@ -160,13 +207,18 @@ export class TokenManager {
     };
   }
 
-  private loadFromDisk() {
-    const items = readSessionsFile();
+  private async ensureReady() {
+    await this.ready;
+  }
+
+  private async loadFromStore() {
+    const items = await readSessionsStore();
+    this.sessions = [];
     for (const item of items) {
       this.sessions.push(this.createSlot(item));
     }
     if (items.length) {
-      console.log(`[TokenMgr] loaded ${items.length} session(s) from ${SESSION_FILE}`);
+      console.log(`[TokenMgr] loaded ${items.length} session(s) from persistent store`);
     }
   }
 
@@ -179,8 +231,8 @@ export class TokenManager {
     }
   }
 
-  private persist() {
-    writeSessionsFile(this.sessions.filter((s) => s.raw_session).map((s) => s.raw_session));
+  private async persist() {
+    await writeSessionsStore(this.sessions.filter((s) => s.raw_session).map((s) => s.raw_session));
   }
 
   private updateExisting(slot: SessionSlot, data: Record<string, unknown>) {
@@ -196,7 +248,8 @@ export class TokenManager {
     slot.disabled = false;
   }
 
-  loadSessionFromJson(rawJson: string | Record<string, unknown>) {
+  async loadSessionFromJson(rawJson: string | Record<string, unknown>) {
+    await this.ensureReady();
     const data = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson;
     const fields = applySessionData(data);
 
@@ -218,7 +271,7 @@ export class TokenManager {
       action = 'added';
     }
 
-    this.persist();
+    await this.persist();
     return {
       status: 'ok',
       action,
@@ -229,26 +282,29 @@ export class TokenManager {
     };
   }
 
-  removeSession(sid: string) {
+  async removeSession(sid: string) {
+    await this.ensureReady();
     const index = this.sessions.findIndex((slot) => slot.sid === sid);
     if (index < 0) return false;
     const removed = this.sessions.splice(index, 1)[0];
     if (this.current?.sid === removed.sid) this.current = null;
     if (this.currentIdx >= this.sessions.length) this.currentIdx = 0;
-    this.persist();
+    await this.persist();
     return true;
   }
 
-  toggleSession(sid: string, disabled: boolean) {
+  async toggleSession(sid: string, disabled: boolean) {
+    await this.ensureReady();
     const slot = this.sessions.find((s) => s.sid === sid);
     if (!slot) return false;
     slot.disabled = disabled;
     if (disabled) slot.error_count = 0;
-    this.persist();
+    await this.persist();
     return true;
   }
 
-  getAllStatus() {
+  async getAllStatus() {
+    await this.ensureReady();
     return this.sessions.map((slot) => ({
       sid: slot.sid,
       account_id: slot.account_id,
@@ -263,6 +319,7 @@ export class TokenManager {
   }
 
   async getValidToken() {
+    await this.ensureReady();
     if (!this.sessions.length) {
       throw new Error('No sessions available. Add one via /auth/session');
     }
@@ -274,7 +331,7 @@ export class TokenManager {
 
       if (slot.disabled || slot.error_count >= MAX_ERROR_COUNT) continue;
 
-      if (!slot.access_token || slot.expires_at > 0 && Date.now() / 1000 >= slot.expires_at - 120) {
+      if ((!slot.access_token) || (slot.expires_at > 0 && Date.now() / 1000 >= slot.expires_at - 120)) {
         const ok = await this.refreshSlot(slot);
         if (!ok) continue;
       }
@@ -338,7 +395,7 @@ export class TokenManager {
       slot.raw_session = data;
       slot.error_count = 0;
       slot.last_error = '';
-      this.persist();
+      await this.persist();
       return true;
     } catch (error) {
       slot.error_count += 1;
@@ -420,4 +477,4 @@ export function validateLoginKey(key: string) {
   return isApiKeyValid(key);
 }
 
-export { DATA_DIR, SESSION_FILE, DEVICE_ID, AUTH_WHITELIST };
+export { DATA_DIR, SESSION_FILE, DEVICE_ID, AUTH_WHITELIST, SESSION_STORE_KEY };

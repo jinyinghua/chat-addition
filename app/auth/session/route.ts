@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = tokenManager.loadSessionFromJson(body as Record<string, unknown>);
+    const result = await tokenManager.loadSessionFromJson(body as Record<string, unknown>);
     return Response.json(result);
   } catch (error) {
     return Response.json(
