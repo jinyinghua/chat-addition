@@ -1,6 +1,5 @@
 import { buildImageJobFileUrl, getPublicBaseUrl } from '@/lib/app-url';
 import { getJobById } from '@/lib/image-job-store';
-import { requireApiKey } from '@/lib/session-manager';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,9 +9,7 @@ function decodeB64(b64: string) {
 }
 
 export async function GET(request: Request, context: { params: Promise<{ jobId: string; index: string }> }) {
-  const authResult = requireApiKey(request);
-  if (authResult) return authResult;
-
+  // 图片文件是公开资源，不需要身份验证
   const { jobId, index } = await context.params;
   const job = await getJobById(jobId);
   if (!job || job.status !== 'succeeded' || !job.result) {
