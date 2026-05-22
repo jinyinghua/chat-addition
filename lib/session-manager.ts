@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DATA_DIR = process.env.DATA_DIR || '/tmp/uapi-pro-mcp-server';
+const DATA_DIR = process.env.DATA_DIR || '/tmp/chat-addition';
 const SESSION_FILE = process.env.SESSION_FILE || path.join(DATA_DIR, 'sessions.json');
 const MAX_ERROR_COUNT = 5;
 const DEVICE_ID = process.env.OAI_DEVICE_ID || '46600ebf-c112-4824-9fa7-bd0636febef8';

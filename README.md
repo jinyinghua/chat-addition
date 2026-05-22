@@ -1,13 +1,15 @@
-# UAPI Pro 搜索 MCP 服务器
+# chat-addition
 
-基于 Vercel Serverless 的 MCP 服务器，提供 UAPI Pro 搜索 API 功能，支持 API Key 认证。
+基于 Vercel / Next.js 的 ChatGPT 接口中转与会话管理服务，兼容 OpenAI 风格接口，并保留 UAPI Pro 搜索 MCP 能力。
 
 ## 功能特性
 
-- 🔐 **API Key 认证** - 基于 Bearer Token 的安全认证
-- 🚀 **Vercel Serverless** - 无状态、自动扩缩容
-- 🌐 **智能搜索** - 支持多种搜索参数和过滤条件
-- 📱 **兼容性强** - 支持标准 MCP 客户端
+- 🔐 **API Key 认证** - 基于 Bearer Token 的鉴权机制
+- 💬 **Chat Completions 中转** - 提供 `/v1/chat/completions`
+- 🖼️ **图片生成与任务查询** - 提供 `/v1/images/generations` 与 jobs 路由
+- 🧩 **Session 管理面板** - 支持登录、注入、禁用、删除、导出会话
+- 🌐 **MCP 搜索能力** - 保留 `search_web` 工具
+- 🚀 **Vercel Serverless** - 支持无状态部署与弹性扩缩容
 
 ## 快速开始
 
@@ -22,14 +24,23 @@ npm install
 创建 `.env.local` 文件：
 
 ```env
-# UAPI Pro API Key (可选，但推荐)
+# UAPI Pro API Key（可选，用于 search_web）
 UAPI_PRO_API_KEY=your-uapi-pro-api-key
 
-# MCP API Keys (用于认证，逗号分隔)
+# API Keys（用于鉴权，逗号分隔）
 MCP_API_KEYS=key1,key2,key3
 
-# 应用URL (用于OAuth元数据)
+# 应用 URL
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+# 可选：KV / Redis
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+
+# 可选：本地数据目录
+DATA_DIR=/tmp/chat-addition
 ```
 
 ### 3. 本地开发
@@ -38,67 +49,40 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 npm run dev
 ```
 
-服务器将在 http://localhost:3000 启动。
+服务器将在 `http://localhost:3000` 启动。
 
-### 4. 测试认证
+## 主要接口
 
-```bash
-# 测试无认证请求（应该返回401）
-curl -X POST http://localhost:3000/api/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+### OpenAI 兼容接口
 
-# 测试带认证请求（应该成功）
-curl -X POST http://localhost:3000/api/mcp \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer key1" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
-```
+- `POST /v1/chat/completions`
+- `POST /v1/images/generations`
+- `GET /v1/images/jobs/{jobId}`
+- `GET /v1/images/jobs/{jobId}/files/{index}`
+- `GET /v1/models`
 
-### 5. 部署到 Vercel
+### 管理接口
 
-```bash
-# 安装 Vercel CLI
-npm i -g vercel
+- `POST /auth/login-check`
+- `GET /auth/status`
+- `POST /auth/session`
+- `POST /auth/session/{sid}/toggle`
+- `POST /auth/session/{sid}/remove`
+- `GET /auth/session/{sid}/download`
+- `GET /auth/sessions/download`
 
-# 登录 Vercel
-vercel login
+### MCP 接口
 
-# 部署
-vercel --prod
-```
+- `POST /api/mcp`
 
-## 客户端配置
+## 客户端兼容性
 
-### Claude Desktop
+可用于对接：
 
-```json
-{
-  "mcpServers": {
-    "uapi-search": {
-      "url": "https://your-domain.vercel.app/api/mcp",
-      "headers": {
-        "Authorization": "Bearer your-api-key"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-```json
-{
-  "mcpServers": {
-    "uapi-search": {
-      "url": "https://your-domain.vercel.app/api/mcp",
-      "headers": {
-        "Authorization": "Bearer your-api-key"
-      }
-    }
-  }
-}
-```
+- NextChat
+- OpenAI 风格客户端
+- 自定义 Chat Completions / Images 客户端
+- 标准 MCP 客户端
 
 ## 可用工具
 
@@ -107,55 +91,20 @@ vercel --prod
 使用 UAPI Pro 搜索 API 进行智能网页搜索。
 
 **参数：**
-- `query` (必填): 搜索查询关键词
-- `site` (可选): 限制搜索特定网站
-- `filetype` (可选): 限制文件类型 (pdf, doc, docx 等)
-- `fetch_full` (可选): 是否获取完整正文
-- `sort` (可选): 排序方式 (relevance/date)
-- `time_range` (可选): 时间范围 (day/week/month/year)
+- `query`：搜索关键词
+- `site`：限制站点
+- `filetype`：限制文件类型
+- `fetch_full`：是否抓取全文
+- `sort`：排序方式 `relevance/date`
+- `time_range`：时间范围 `day/week/month/year`
 
-**示例：**
-```json
-{
-  "name": "search_web",
-  "arguments": {
-    "query": "最新AI技术",
-    "sort": "date",
-    "time_range": "week"
-  }
-}
-```
-
-## 生成 API Key
+## 部署
 
 ```bash
-# 生成安全的 API Key
-openssl rand -hex 32
-
-# 或者更长的 Key
-openssl rand -base64 48
+npm i -g vercel
+vercel login
+vercel --prod
 ```
-
-## 安全说明
-
-1. **API Key 存储** - 将 API Key 存储在 Vercel 环境变量中，不要提交到代码仓库
-2. **HTTPS** - 生产环境强制使用 HTTPS
-3. **认证失败** - 未认证的请求会返回 401 Unauthorized
-4. **作用域控制** - 可以为不同的 API Key 设置不同的权限
-
-## 故障排除
-
-### 认证失败
-
-- 检查 `MCP_API_KEYS` 环境变量是否正确设置
-- 确保请求头中的 `Authorization` 格式为 `Bearer your-api-key`
-- 检查 API Key 是否有效（未过期、未被撤销）
-
-### 搜索失败
-
-- 检查 `UAPI_PRO_API_KEY` 环境变量是否正确设置
-- 确认网络连接正常
-- 检查 UAPI Pro API 服务状态
 
 ## 许可证
 

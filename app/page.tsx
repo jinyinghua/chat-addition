@@ -98,8 +98,8 @@ export default function Page() {
 
   return (
     <main style={{ fontFamily: 'sans-serif', padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-      <h1>UAPI Pro MCP Server</h1>
-      <p>搜索 + ChatGPT session proxy</p>
+      <h1>chat-addition</h1>
+      <p>ChatGPT 中转 + 会话管理 + MCP 搜索</p>
 
       {!key ? (
         <section style={{ marginTop: 24 }}>

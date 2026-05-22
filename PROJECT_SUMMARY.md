@@ -1,9 +1,9 @@
-# UAPI Pro MCP 服务器项目总结
+# chat-addition 项目总结
 
 ## 📁 项目结构
 
 ```
-uapi-pro-mcp-server/
+chat-addition/
 ├── app/
 │   ├── api/
 │   │   └── mcp/

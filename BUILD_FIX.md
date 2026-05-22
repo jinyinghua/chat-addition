@@ -17,7 +17,7 @@ Type '{ type: string; text: string; }[]' is not assignable to type '...'
 
 **方法一：清除缓存重新部署**
 1. 登录 Vercel 控制台
-2. 进入项目 `uapi-pro-mcp-server`
+2. 进入项目 `chat-addition`
 3. 点击 **Settings** 标签
 4. 找到 **Build & Development Settings**
 5. 点击 **Clear Build Cache**
@@ -27,7 +27,7 @@ Type '{ type: string; text: string; }[]' is not assignable to type '...'
 ```bash
 # 已经推送了代码，应该会自动触发部署
 # 如果没有自动部署，可以手动触发：
-cd uapi-pro-mcp-server
+cd chat-addition
 git commit --allow-empty -m "触发重新部署"
 git push
 ```

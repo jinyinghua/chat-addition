@@ -194,7 +194,7 @@ export function parseDataUri(uri: string): { bytes: Uint8Array; mimeType: string
 export async function fetchImageAsBase64(imageUrl: string) {
   const response = await fetch(imageUrl, {
     headers: {
-      'User-Agent': 'uapi-pro-mcp-server/1.0',
+      'User-Agent': 'chat-addition/1.0',
     },
   });
 
