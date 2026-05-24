@@ -61,7 +61,7 @@ const handler = createMcpHandler(
         try {
           const { contentType, base64 } = await fetchImageAsBase64(image_url);
           return {
-            content: [textContent(`图片读取成功: ${contentType}`), imageContent(base64, contentType)]
+            content: [textContent(`data:${contentType};base64,${base64}`)]
           };
         } catch (error) {
           return {
