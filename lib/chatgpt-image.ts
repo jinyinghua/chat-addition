@@ -40,6 +40,10 @@ function normalizeMime(contentType: string): string {
   return 'image/png';
 }
 
+function isUpstreamAuthError(status: number) {
+  return status === 401 || status === 403;
+}
+
 export async function getSentinelTokens(accessToken: string, deviceId: string) {
   const reqToken = generateRequirementsToken();
   const resp = await fetch(`${BASE_URL}/sentinel/chat-requirements`, {
@@ -54,7 +58,9 @@ export async function getSentinelTokens(accessToken: string, deviceId: string) {
   });
 
   if (!resp.ok) {
-    throw new Error(`chat-requirements failed: ${resp.status} ${await resp.text().catch(() => '')}`);
+    const error = new Error(`chat-requirements failed: ${resp.status} ${await resp.text().catch(() => '')}`) as Error & { status?: number };
+    error.status = resp.status;
+    throw error;
   }
 
   const data = (await resp.json()) as Record<string, unknown>;
@@ -397,9 +403,25 @@ export async function handleImageViaConversation(params: {
     fullPrompt += ' The image must have a transparent background (PNG with alpha channel).';
   }
 
-  const accessToken = await tokenManager.getValidToken();
+  let accessToken = await tokenManager.getValidToken();
   const deviceId = tokenManager.deviceId;
-  const { chatToken, proofToken } = await getSentinelTokens(accessToken, deviceId);
+
+  const getAuthBundle = async (token: string) => {
+    try {
+      const sentinel = await getSentinelTokens(token, deviceId);
+      return { accessToken: token, ...sentinel };
+    } catch (error) {
+      const status = typeof error === 'object' && error && 'status' in error ? Number((error as { status?: number }).status) : 0;
+      if (!isUpstreamAuthError(status)) throw error;
+      await tokenManager.invalidateAccessToken(token, `image sentinel auth failed: ${status}`);
+      const freshToken = await tokenManager.getValidToken();
+      const sentinel = await getSentinelTokens(freshToken, deviceId);
+      return { accessToken: freshToken, ...sentinel };
+    }
+  };
+
+  let { accessToken: resolvedToken, chatToken, proofToken } = await getAuthBundle(accessToken);
+  accessToken = resolvedToken;
 
   let body: Record<string, unknown> | null = null;
   if (params.inputImages && params.inputImages.length) {
@@ -420,8 +442,7 @@ export async function handleImageViaConversation(params: {
     body = buildConversationBody(fullPrompt, params.model) as Record<string, unknown>;
   }
 
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
+  const baseHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     'User-Agent': SENTINEL_USER_AGENT,
     'OAI-Device-Id': deviceId,
@@ -437,81 +458,114 @@ export async function handleImageViaConversation(params: {
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'same-origin',
-    'openai-sentinel-chat-requirements-token': chatToken,
   };
-  if (proofToken) headers['openai-sentinel-proof-token'] = proofToken;
+
+  function buildRequestHeaders(token: string, sentinelChatToken: string, sentinelProofToken: string) {
+    const headers: Record<string, string> = {
+      ...baseHeaders,
+      Authorization: `Bearer ${token}`,
+      'openai-sentinel-chat-requirements-token': sentinelChatToken,
+    };
+    if (sentinelProofToken) {
+      headers['openai-sentinel-proof-token'] = sentinelProofToken;
+    }
+    return headers;
+  }
 
   const parentMessageId = String(((body.messages as Array<Record<string, unknown>>)[0] || {}).id || '');
 
   const tryPath = async (path: '/f/conversation' | '/conversation') => {
     const routeLabel = path.split('/').pop() || path;
-    console.log(`[conv] POST ${BASE_URL}${path}`);
-    const resp = await fetch(`${BASE_URL}${path}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-      console.warn(`[conv] ${routeLabel} returned ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 512)}`);
-      return { ok: false, images: [] as UpstreamImage[], conversationId: '', asyncMode: false, chunks: [] as string[] };
-    }
-    if (!resp.body) {
-      throw new Error('No response body');
-    }
+    let currentToken = accessToken;
+    let currentChatToken = chatToken;
+    let currentProofToken = proofToken;
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    const chunks: string[] = [];
-    let conversationId = '';
-    let asyncMode = false;
-    const liveImages: UpstreamImage[] = [];
-    const seenIds = new Set<string>();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      console.log(`[conv] POST ${BASE_URL}${path} attempt=${attempt + 1}`);
+      const resp = await fetch(`${BASE_URL}${path}`, {
+        method: 'POST',
+        headers: buildRequestHeaders(currentToken, currentChatToken, currentProofToken),
+        body: JSON.stringify(body),
+      });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      for (const line of text.split(/\r?\n/)) {
-        if (line) chunks.push(line);
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6).trim();
-        if (payload === '[DONE]' || !payload.startsWith('{')) continue;
-        let event: Record<string, unknown>;
-        try {
-          event = JSON.parse(payload) as Record<string, unknown>;
-        } catch {
+      if (!resp.ok) {
+        const errorText = (await resp.text().catch(() => '')).slice(0, 512);
+        if (attempt === 0 && isUpstreamAuthError(resp.status)) {
+          console.warn(`[conv] ${routeLabel} auth failed ${resp.status}, forcing refresh`);
+          await tokenManager.invalidateAccessToken(currentToken, `${routeLabel} auth failed: ${resp.status}`);
+          const refreshed = await getAuthBundle(await tokenManager.getValidToken());
+          accessToken = refreshed.accessToken;
+          chatToken = refreshed.chatToken;
+          proofToken = refreshed.proofToken;
+          currentToken = refreshed.accessToken;
+          currentChatToken = refreshed.chatToken;
+          currentProofToken = refreshed.proofToken;
           continue;
         }
-        const cid = typeof event.conversation_id === 'string' ? event.conversation_id : '';
-        if (cid) conversationId = cid;
-        const v = event.v && typeof event.v === 'object' ? (event.v as Record<string, unknown>) : undefined;
-        if (!conversationId && v && typeof v.conversation_id === 'string') conversationId = v.conversation_id;
-        if (typeof event.async_status === 'number' && event.async_status > 0) asyncMode = true;
-        if (event.error) {
-          throw new Error(`Upstream error: ${typeof event.error === 'string' ? event.error : JSON.stringify(event.error)}`);
-        }
-        const { message, conversationId: evtCid } = unwrapEvent(event);
-        const found = message
-          ? await extractImagesFromMessage({ accessToken, deviceId, message, conversationId: evtCid || conversationId, seenIds, persistPrefix: params.persistPrefix })
-          : [];
-        if (found.length) mergeImages(liveImages, found);
+        console.warn(`[conv] ${routeLabel} returned ${resp.status}: ${errorText}`);
+        return { ok: false, images: [] as UpstreamImage[], conversationId: '', asyncMode: false, chunks: [] as string[] };
       }
-    }
-    reader.releaseLock();
 
-    let images = liveImages;
-    if (images.length < params.n) {
-      const reparsed = await parseConversationSse(accessToken, deviceId, chunks, params.persistPrefix);
-      mergeImages(images, reparsed);
-    }
-    if (images.length) {
+      if (!resp.body) {
+        throw new Error('No response body');
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      const chunks: string[] = [];
+      let conversationId = '';
+      let asyncMode = false;
+      const liveImages: UpstreamImage[] = [];
+      const seenIds = new Set<string>();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split(/\r?\n/)) {
+          if (line) chunks.push(line);
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]' || !payload.startsWith('{')) continue;
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(payload) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const cid = typeof event.conversation_id === 'string' ? event.conversation_id : '';
+          if (cid) conversationId = cid;
+          const v = event.v && typeof event.v === 'object' ? (event.v as Record<string, unknown>) : undefined;
+          if (!conversationId && v && typeof v.conversation_id === 'string') conversationId = v.conversation_id;
+          if (typeof event.async_status === 'number' && event.async_status > 0) asyncMode = true;
+          if (event.error) {
+            throw new Error(`Upstream error: ${typeof event.error === 'string' ? event.error : JSON.stringify(event.error)}`);
+          }
+          const { message, conversationId: evtCid } = unwrapEvent(event);
+          const found = message
+            ? await extractImagesFromMessage({ accessToken: currentToken, deviceId, message, conversationId: evtCid || conversationId, seenIds, persistPrefix: params.persistPrefix })
+            : [];
+          if (found.length) mergeImages(liveImages, found);
+        }
+      }
+      reader.releaseLock();
+
+      let images = liveImages;
+      if (images.length < params.n) {
+        const reparsed = await parseConversationSse(currentToken, deviceId, chunks, params.persistPrefix);
+        mergeImages(images, reparsed);
+      }
+      if (images.length) {
+        return { ok: true, images, conversationId, asyncMode, chunks };
+      }
+      if (asyncMode && conversationId) {
+        images = await pollConversationForImages({ accessToken: currentToken, deviceId, conversationId, parentMessageId, persistPrefix: params.persistPrefix });
+        if (images.length) return { ok: true, images, conversationId, asyncMode, chunks };
+      }
       return { ok: true, images, conversationId, asyncMode, chunks };
     }
-    if (asyncMode && conversationId) {
-      images = await pollConversationForImages({ accessToken, deviceId, conversationId, parentMessageId, persistPrefix: params.persistPrefix });
-      if (images.length) return { ok: true, images, conversationId, asyncMode, chunks };
-    }
-    return { ok: true, images, conversationId, asyncMode, chunks };
+
+    return { ok: false, images: [] as UpstreamImage[], conversationId: '', asyncMode: false, chunks: [] as string[] };
   };
 
   const first = await tryPath('/f/conversation');

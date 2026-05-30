@@ -8,6 +8,10 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
+function isUpstreamAuthError(status: number) {
+  return status === 401 || status === 403;
+}
+
 async function getSentinelTokens(accessToken: string) {
   console.log('[chat] getSentinelTokens start');
   const reqToken = generateRequirementsToken();
@@ -24,7 +28,9 @@ async function getSentinelTokens(accessToken: string) {
 
   console.log(`[chat] chat-requirements status=${resp.status}`);
   if (!resp.ok) {
-    throw new Error(`chat-requirements failed: ${resp.status}`);
+    const error = new Error(`chat-requirements failed: ${resp.status}`) as Error & { status?: number };
+    error.status = resp.status;
+    throw error;
   }
 
   const data = (await resp.json()) as Record<string, unknown>;
@@ -61,7 +67,9 @@ async function callConversation(body: Record<string, unknown>, accessToken: stri
   if (!resp.ok || !resp.body) {
     const text = await resp.text().catch(() => '');
     console.warn('[chat] conversation failed body=', text.slice(0, 500));
-    throw new Error(`upstream conversation failed: ${resp.status}`);
+    const error = new Error(`upstream conversation failed: ${resp.status}`) as Error & { status?: number };
+    error.status = resp.status;
+    throw error;
   }
 
   return resp;
@@ -92,8 +100,25 @@ function computeDelta(previousText: string, currentText: string) {
   return currentText;
 }
 
+async function getFreshTokenAfterAuthFailure(accessToken: string, reason: string) {
+  await tokenManager.invalidateAccessToken(accessToken, reason);
+  return tokenManager.getValidToken();
+}
+
+async function callConversationWithRetry(body: Record<string, unknown>, accessToken: string) {
+  try {
+    return await callConversation(body, accessToken);
+  } catch (error) {
+    const status = typeof error === 'object' && error && 'status' in error ? Number((error as { status?: number }).status) : 0;
+    if (!isUpstreamAuthError(status)) throw error;
+    console.warn(`[chat] upstream auth failed, forcing refresh status=${status}`);
+    const freshToken = await getFreshTokenAfterAuthFailure(accessToken, `upstream auth failed: ${status}`);
+    return callConversation(body, freshToken);
+  }
+}
+
 async function streamConversationToOpenAI(body: Record<string, unknown>, model: string, accessToken: string) {
-  const upstream = await callConversation(body, accessToken);
+  const upstream = await callConversationWithRetry(body, accessToken);
   const reader = upstream.body!.getReader();
   const decoder = new TextDecoder();
   const cmplId = `chatcmpl-${crypto.randomUUID().slice(0, 12)}`;
@@ -292,7 +317,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const upstream = await callConversation(body as Record<string, unknown>, accessToken);
+    const upstream = await callConversationWithRetry(body as Record<string, unknown>, accessToken);
     const reader = upstream.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = '';

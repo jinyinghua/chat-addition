@@ -101,10 +101,10 @@ function applySessionData(data: Record<string, unknown>) {
     const ts = Date.parse(data.expires);
     expiresAt = Number.isFinite(ts) ? ts / 1000 : 0;
   }
-  if (!expiresAt) {
+  if (!expiresAt && accessToken) {
     const payload = jwtPayload(accessToken);
     const exp = typeof payload.exp === 'number' ? payload.exp : 0;
-    expiresAt = exp || Math.floor(Date.now() / 1000) + 3600;
+    expiresAt = exp || 0;
   }
 
   return {
@@ -245,7 +245,7 @@ export class TokenManager {
     slot.session_token = fields.sessionToken || slot.session_token;
     slot.account_id = fields.accountId || slot.account_id;
     slot.email = fields.email || slot.email;
-    slot.expires_at = 0;
+    slot.expires_at = fields.expiresAt;
     slot.raw_session = data;
     slot.error_count = 0;
     slot.last_error = '';
@@ -270,7 +270,6 @@ export class TokenManager {
       action = 'updated';
     } else {
       slot = this.createSlot(data);
-      slot.expires_at = 0;
       this.sessions.push(slot);
       action = 'added';
     }
@@ -320,6 +319,20 @@ export class TokenManager {
       is_expired: slot.expires_at > 0 ? Date.now() / 1000 >= slot.expires_at - 120 : true,
       is_healthy: !slot.disabled && slot.error_count < MAX_ERROR_COUNT,
     }));
+  }
+
+  async invalidateAccessToken(accessToken: string, reason = 'token rejected by upstream') {
+    await this.ensureReady();
+    if (!accessToken) return;
+    const slot = this.sessions.find((item) => item.access_token === accessToken) || this.current;
+    if (!slot) return;
+    slot.access_token = '';
+    slot.expires_at = 0;
+    slot.last_error = reason;
+    if (this.current?.sid === slot.sid) {
+      this.current = null;
+    }
+    await this.persist();
   }
 
   async getValidToken() {
