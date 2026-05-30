@@ -295,21 +295,27 @@ export async function pollConversationForImages(params: {
   parentMessageId?: string;
   persistPrefix?: string;
   maxWaitSeconds?: number;
+  refreshAccessToken?: (reason: string) => Promise<string>;
 }) {
-  const headers = {
-    Authorization: `Bearer ${params.accessToken}`,
-    'User-Agent': SENTINEL_USER_AGENT,
-    'OAI-Device-Id': params.deviceId,
-  };
   const deadline = Date.now() + (params.maxWaitSeconds || 120) * 1000;
   const seenIds = new Set<string>();
+  let currentToken = params.accessToken;
 
   let attempt = 0;
   while (Date.now() < deadline) {
     attempt += 1;
     await new Promise((r) => setTimeout(r, attempt === 1 ? 1000 : 3000));
+    const headers = {
+      Authorization: `Bearer ${currentToken}`,
+      'User-Agent': SENTINEL_USER_AGENT,
+      'OAI-Device-Id': params.deviceId,
+    };
     const resp = await fetch(`${BASE_URL}/conversation/${params.conversationId}`, { headers });
     if (!resp.ok) {
+      if (isUpstreamAuthError(resp.status) && params.refreshAccessToken) {
+        currentToken = await params.refreshAccessToken(`poll auth failed: ${resp.status}`);
+        continue;
+      }
       if (resp.status === 401 || resp.status === 403) throw new Error(`Poll auth error: ${resp.status}`);
       continue;
     }
@@ -344,7 +350,7 @@ export async function pollConversationForImages(params: {
       }
 
       const found = await extractImagesFromMessage({
-        accessToken: params.accessToken,
+        accessToken: currentToken,
         deviceId: params.deviceId,
         message,
         conversationId: params.conversationId,
@@ -559,7 +565,24 @@ export async function handleImageViaConversation(params: {
         return { ok: true, images, conversationId, asyncMode, chunks };
       }
       if (asyncMode && conversationId) {
-        images = await pollConversationForImages({ accessToken: currentToken, deviceId, conversationId, parentMessageId, persistPrefix: params.persistPrefix });
+        images = await pollConversationForImages({
+          accessToken: currentToken,
+          deviceId,
+          conversationId,
+          parentMessageId,
+          persistPrefix: params.persistPrefix,
+          refreshAccessToken: async (reason: string) => {
+            await tokenManager.invalidateAccessToken(currentToken, reason);
+            const refreshed = await getAuthBundle(await tokenManager.getValidToken());
+            accessToken = refreshed.accessToken;
+            chatToken = refreshed.chatToken;
+            proofToken = refreshed.proofToken;
+            currentToken = refreshed.accessToken;
+            currentChatToken = refreshed.chatToken;
+            currentProofToken = refreshed.proofToken;
+            return currentToken;
+          },
+        });
         if (images.length) return { ok: true, images, conversationId, asyncMode, chunks };
       }
       return { ok: true, images, conversationId, asyncMode, chunks };
