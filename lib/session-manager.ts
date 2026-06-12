@@ -33,6 +33,13 @@ export interface SessionSlot {
   disabled: boolean;
 }
 
+type PersistedSession = {
+  raw_session: Record<string, unknown>;
+  disabled?: boolean;
+  error_count?: number;
+  last_error?: string;
+};
+
 let redisClient: Redis | null = null;
 
 function cleanEnv(name: string) {
@@ -52,7 +59,6 @@ function ensureDataDir() {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   } catch {
-    // ignore
   }
 }
 
@@ -116,20 +122,35 @@ function applySessionData(data: Record<string, unknown>) {
   };
 }
 
-function readSessionsFile(): Record<string, unknown>[] {
+function normalizePersistedSession(item: unknown): PersistedSession | null {
+  if (!item || typeof item !== 'object') return null;
+  const record = item as Record<string, unknown>;
+  if (record.raw_session && typeof record.raw_session === 'object') {
+    return {
+      raw_session: record.raw_session as Record<string, unknown>,
+      disabled: typeof record.disabled === 'boolean' ? record.disabled : undefined,
+      error_count: typeof record.error_count === 'number' ? record.error_count : undefined,
+      last_error: typeof record.last_error === 'string' ? record.last_error : undefined,
+    };
+  }
+  return { raw_session: record };
+}
+
+function readSessionsFile(): PersistedSession[] {
   try {
     if (!fs.existsSync(SESSION_FILE)) return [];
     const raw = fs.readFileSync(SESSION_FILE, 'utf8').trim();
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((v) => v && typeof v === 'object') : [parsed];
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    return items.map(normalizePersistedSession).filter((v): v is PersistedSession => !!v);
   } catch (error) {
     console.warn('[TokenMgr] failed to load sessions from file:', error);
     return [];
   }
 }
 
-function writeSessionsFile(items: Record<string, unknown>[]) {
+function writeSessionsFile(items: PersistedSession[]) {
   try {
     ensureDataDir();
     fs.writeFileSync(SESSION_FILE, JSON.stringify(items, null, 2), 'utf8');
@@ -138,13 +159,13 @@ function writeSessionsFile(items: Record<string, unknown>[]) {
   }
 }
 
-async function readSessionsStore(): Promise<Record<string, unknown>[]> {
+async function readSessionsStore(): Promise<PersistedSession[]> {
   const redis = getRedis();
   if (redis) {
     try {
-      const raw = await redis.get<Record<string, unknown>[]>(SESSION_STORE_KEY);
+      const raw = await redis.get<unknown>(SESSION_STORE_KEY);
       if (Array.isArray(raw)) {
-        return raw.filter((v) => v && typeof v === 'object');
+        return raw.map(normalizePersistedSession).filter((v): v is PersistedSession => !!v);
       }
     } catch (error) {
       console.warn('[TokenMgr] failed to load sessions from redis:', error);
@@ -153,7 +174,7 @@ async function readSessionsStore(): Promise<Record<string, unknown>[]> {
   return readSessionsFile();
 }
 
-async function writeSessionsStore(items: Record<string, unknown>[]) {
+async function writeSessionsStore(items: PersistedSession[]) {
   const redis = getRedis();
   if (redis) {
     try {
@@ -193,7 +214,7 @@ export class TokenManager {
     await this.persist();
   }
 
-  private createSlot(data: Record<string, unknown>): SessionSlot {
+  private createSlot(data: Record<string, unknown>, meta?: Omit<PersistedSession, 'raw_session'>): SessionSlot {
     const fields = applySessionData(data);
     const sid = fields.accountId ? fields.accountId.slice(0, 8) : crypto.randomUUID().slice(0, 8);
 
@@ -205,9 +226,9 @@ export class TokenManager {
       email: fields.email,
       expires_at: fields.expiresAt,
       raw_session: data,
-      error_count: 0,
-      last_error: '',
-      disabled: false,
+      error_count: typeof meta?.error_count === 'number' ? meta.error_count : 0,
+      last_error: typeof meta?.last_error === 'string' ? meta.last_error : '',
+      disabled: meta?.disabled === true,
     };
   }
 
@@ -219,7 +240,7 @@ export class TokenManager {
     const items = await readSessionsStore();
     this.sessions = [];
     for (const item of items) {
-      this.sessions.push(this.createSlot(item));
+      this.sessions.push(this.createSlot(item.raw_session, item));
     }
     if (items.length) {
       console.log(`[TokenMgr] loaded ${items.length} session(s) from persistent store`);
@@ -236,7 +257,12 @@ export class TokenManager {
   }
 
   private async persist() {
-    await writeSessionsStore(this.sessions.filter((s) => s.raw_session).map((s) => s.raw_session));
+    await writeSessionsStore(this.sessions.map((s) => ({
+      raw_session: s.raw_session,
+      disabled: s.disabled,
+      error_count: s.error_count,
+      last_error: s.last_error,
+    })));
   }
 
   private updateExisting(slot: SessionSlot, data: Record<string, unknown>) {

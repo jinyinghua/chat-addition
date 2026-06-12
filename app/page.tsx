@@ -83,17 +83,21 @@ export default function Page() {
   }
 
   async function toggleSession(sid: string, disabled: boolean) {
-    await fetch(`/auth/session/${sid}/toggle`, {
+    const res = await fetch(`/auth/session/${sid}/toggle`, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({ disabled }),
     });
-    await loadStatus();
+    const data = await res.json().catch(() => ({}));
+    setMessage(res.ok ? (data.message || '操作成功') : (data.detail || data.error?.message || '操作失败'));
+    if (res.ok) await loadStatus();
   }
 
   async function removeSession(sid: string) {
-    await fetch(`/auth/session/${sid}/remove`, { method: 'POST', headers: authHeaders });
-    await loadStatus();
+    const res = await fetch(`/auth/session/${sid}/remove`, { method: 'POST', headers: authHeaders });
+    const data = await res.json().catch(() => ({}));
+    setMessage(res.ok ? (data.message || '删除成功') : (data.detail || data.error?.message || '删除失败'));
+    if (res.ok) await loadStatus();
   }
 
   return (

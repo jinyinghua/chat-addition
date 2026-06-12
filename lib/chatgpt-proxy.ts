@@ -107,14 +107,14 @@ export function buildConversationBody(prompt: string, model = DEFAULT_MODEL) {
 export function buildTextConversationBody(messages: ChatMessage[], model = DEFAULT_MODEL) {
   const parts: string[] = [];
   for (const msg of messages || []) {
-    const role = msg.role || 'user';
-    const content = normalizeTextContent(msg.content);
+    const role = (msg.role || 'user').toLowerCase();
+    const content = normalizeTextContent(msg.content).trim();
     if (!content) continue;
-    if (role === 'system') parts.push(`[System] ${content}`);
-    else if (role === 'assistant') parts.push(`[Assistant] ${content}`);
-    else parts.push(content);
+    if (role === 'system') parts.push(`[system]\n${content}`);
+    else if (role === 'assistant') parts.push(`[assistant]\n${content}`);
+    else parts.push(`[user]\n${content}`);
   }
-  const prompt = parts.join('\n') || 'hello';
+  const prompt = parts.join('\n\n') || '[user]\nhello';
   return {
     action: 'next',
     messages: [
