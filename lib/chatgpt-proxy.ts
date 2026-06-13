@@ -4,7 +4,7 @@ export const WEB_USER_AGENT =
   'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
 export const SENTINEL_USER_AGENT = WEB_USER_AGENT;
 
-export const IMAGE_MODELS = new Set(['gpt-image-1', 'gpt-image-2', 'auto']);
+export const IMAGE_MODELS = new Set(['gpt-image-1', 'gpt-image-2']);
 export const DEFAULT_MODEL = 'gpt-5.4-mini';
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 

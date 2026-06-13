@@ -187,12 +187,19 @@ export async function POST(request: Request) {
   const { prompt, images } = extractPromptAndImages(messages as never[]);
   console.log(`[chat] POST /v1/chat/completions model=${model} stream=${stream} messages=${messages.length}`);
 
-  if (IMAGE_MODELS.has(model)) {
+  // Autodetect image generation from top-level prompt+size fields
+  const hasPromptSize = typeof payload.prompt === 'string' && payload.prompt.trim() &&
+                        typeof payload.size === 'string';
+  if (IMAGE_MODELS.has(model) || (hasPromptSize && !messages.length)) {
     const ownerToken = getAuthTokenFromRequest(request);
+    const effectiveModel = hasPromptSize && !IMAGE_MODELS.has(model) ? 'gpt-image-2' : model;
+    const effectivePrompt = hasPromptSize
+      ? `${payload.prompt as string}\n\n[size: ${payload.size as string}]`
+      : (prompt || 'hello');
     const { job } = await createOrGetImageJob({
       ownerToken,
-      model,
-      prompt: prompt || 'hello',
+      model: effectiveModel,
+      prompt: effectivePrompt,
       size: typeof payload.size === 'string' ? payload.size : 'auto',
       quality: typeof payload.quality === 'string' ? payload.quality : 'auto',
       background: typeof payload.background === 'string' ? payload.background : 'auto',
@@ -260,7 +267,7 @@ export async function POST(request: Request) {
 
     const baseUrl = getPublicBaseUrl(request);
     if (stream) {
-      const response = buildChatCompletionImageResponse(waited, model, baseUrl);
+      const response = buildChatCompletionImageResponse(waited, effectiveModel, baseUrl);
       const content = String(response.choices[0]?.message?.content || '');
       return new Response(
         new ReadableStream({
@@ -289,7 +296,7 @@ export async function POST(request: Request) {
     }
 
     console.log(`[chat-image] succeeded job id=${waited.id} assets=${waited.result?.assets?.length || 0}`);
-    return Response.json(buildChatCompletionImageResponse(waited, model, baseUrl), {
+    return Response.json(buildChatCompletionImageResponse(waited, effectiveModel, baseUrl), {
       headers: { 'X-Image-Job-Id': waited.id },
     });
   }
