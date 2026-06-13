@@ -7,8 +7,8 @@ export function getPublicBaseUrl(request?: Request) {
     }
   }
 
-  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, '');
+  const appUrl = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (appUrl) return appUrl.replace(/\/$/, '');
 
   const production = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   if (production) return production.startsWith('http') ? production.replace(/\/$/, '') : `https://${production}`;
