@@ -213,6 +213,42 @@ export async function fetchImageAsBase64(imageUrl: string) {
   return { contentType, base64 };
 }
 
+/**
+ * 处理 ChatGPT 后端返回的 entity 标记格式。
+ * 匹配 entity["str1","str2",...,"lastStr"]（xxx），只保留 [] 内最后一个字符串。
+ * 例如：entity["software","Django","Python Web Framework"]（Python）
+ *   → Python Web Framework
+ */
+const ENTITY_PATTERN = /entity\[("[^"]*"(?:,"[^"]*")*)\][^\n]*/g;
+
+function extractLastField(match: string, fields: string): string {
+  const parts: string[] = [];
+  const re = /"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fields)) !== null) {
+    parts.push(m[1]);
+  }
+  return parts.length > 0 ? parts[parts.length - 1] : match;
+}
+
+/**
+ * 处理 ChatGPT 后端返回的 url 标记格式。
+ * 匹配 url名称链接地址，转换为 markdown 链接 [名称](地址)。
+ * 例如：urlOpenAIhttps://openai.com
+ *   → [OpenAI](https://openai.com)
+ */
+const URL_TAG_PATTERN = /url([^\s]+?)(https?:\/\/\S+)/g;
+
+function buildUrlMarkdown(_match: string, name: string, url: string): string {
+  return `[${name}](${url})`;
+}
+
+export function processEntityTags(text: string): string {
+  let result = text.replace(ENTITY_PATTERN, (_full, fields: string) => extractLastField(_full, fields));
+  result = result.replace(URL_TAG_PATTERN, buildUrlMarkdown);
+  return result;
+}
+
 export function buildOpenAiStreamChunk({
   id,
   created,

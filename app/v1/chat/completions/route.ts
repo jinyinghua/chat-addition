@@ -1,5 +1,5 @@
 import { getAuthTokenFromRequest, requireApiKey, tokenManager } from '@/lib/session-manager';
-import { buildOpenAiStreamChunk, buildTextConversationBody, extractPromptAndImages, IMAGE_MODELS, DEFAULT_MODEL, BASE_URL, WEB_USER_AGENT } from '@/lib/chatgpt-proxy';
+import { buildOpenAiStreamChunk, buildTextConversationBody, extractPromptAndImages, IMAGE_MODELS, DEFAULT_MODEL, BASE_URL, WEB_USER_AGENT, processEntityTags } from '@/lib/chatgpt-proxy';
 import { generateRequirementsToken, solvePow } from '@/lib/chatgpt-sentinel';
 import { buildChatCompletionImageResponse, buildImageTimeoutResponse, createOrGetImageJob, ensureImageJobStarted } from '@/lib/image-job-service';
 import { getPublicBaseUrl } from '@/lib/app-url';
@@ -127,7 +127,7 @@ async function streamConversationToOpenAI(body: Record<string, unknown>, model: 
   return new ReadableStream({
     async start(controller) {
       let buffer = '';
-      let lastText = '';
+      let lastProcessedText = '';
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -147,9 +147,10 @@ async function streamConversationToOpenAI(body: Record<string, unknown>, model: 
             try {
               const event = JSON.parse(payload) as Record<string, unknown>;
               const fullText = extractAssistantFullTextFromEvent(event);
-              const delta = computeDelta(lastText, fullText);
+              const processedText = processEntityTags(fullText);
+              const delta = computeDelta(lastProcessedText, processedText);
               if (!delta) continue;
-              lastText = fullText;
+              lastProcessedText = processedText;
               const chunk = buildOpenAiStreamChunk({ id: cmplId, created, model, content: delta });
               controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
             } catch {
@@ -349,7 +350,8 @@ export async function POST(request: Request) {
       }
     }
     reader.releaseLock();
-    console.log(`[chat] non-stream content length=${latestText.length}`);
+    const finalText = processEntityTags(latestText);
+    console.log(`[chat] non-stream content length=${finalText.length}`);
 
     return Response.json({
       id: `chatcmpl-${crypto.randomUUID().slice(0, 12)}`,
@@ -359,7 +361,7 @@ export async function POST(request: Request) {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: latestText },
+          message: { role: 'assistant', content: finalText },
           finish_reason: 'stop',
         },
       ],
