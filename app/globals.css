@@ -5,11 +5,12 @@
 /* ============================================================
    主题：Aurora (Dark Neural Expressive)
    深邃蓝灰 · 神经元渐变 · 弥散阴影 · 有机形态
+   字体：使用 next/font/google 加载的谷歌字体 (CSS 变量)
    ============================================================ */
 :root,
 [data-theme='aurora'] {
-  --font-sans: 'Outfit', 'Google Sans', 'SF Pro Rounded', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  --font-sans: var(--font-outfit), 'Google Sans', 'SF Pro Rounded', system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), 'SF Mono', ui-monospace, monospace;
 
   --bg: #0f1115;
   --surface: #17191f;
@@ -129,8 +130,8 @@ body {
 
   /* 悬浮面板 */
   .neural-floating {
-    background: rgba(var(--surface-rgb), 0.85); /* 需要在实际使用时配合 backdrop-blur */
-    border-radius: 999px; /* 胶囊形 */
+    background: rgba(var(--surface-rgb), 0.85);
+    border-radius: 999px;
     box-shadow: var(--shadow-floating);
     border: 1px solid var(--border);
   }
@@ -334,7 +335,7 @@ body {
   border-radius: 16px;
   overflow: hidden;
   border: 1px solid var(--border);
-  background: #0f1115; /* 代码块始终保持深色 */
+  background: #0f1115;
 }
 .md-body table {
   width: 100%;
