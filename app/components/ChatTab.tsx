@@ -348,27 +348,6 @@ export function ChatTab({
         .stop-btn:hover {
           transform: scale(1.08);
         }
-
-        /* 胶囊输入框 */
-        .capsule {
-          background: rgba(26, 26, 30, 0.9);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          backdrop-filter: blur(30px);
-          -webkit-backdrop-filter: blur(30px);
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
-          transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-        }
-        [data-theme='daylight'] .capsule {
-          background: rgba(255, 255, 255, 0.85);
-          border-color: rgba(0, 0, 0, 0.08);
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
-        }
-        .capsule:hover {
-          border-color: rgba(255, 255, 255, 0.28);
-        }
-        [data-theme='daylight'] .capsule:hover {
-          border-color: rgba(0, 0, 0, 0.15);
-        }
       `}</style>
     </>
   );
