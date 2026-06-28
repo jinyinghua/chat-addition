@@ -45,7 +45,6 @@ export function ChatTab({
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const hasReportedTitle = useRef(false);
 
   const isImg = isImageModel(model);
 
@@ -63,15 +62,16 @@ export function ChatTab({
     }
   }, [messages, onMessagesChange]);
 
-  // 首次对话记录标题
+  // 每次助手回复完成后自动保存完整对话到历史记录
+  // streaming -> false 且 messages 中有用户消息时触发
   useEffect(() => {
-    if (hasReportedTitle.current) return;
+    if (streaming) return;
+    if (messages.length === 0) return;
     const firstUser = messages.find((m) => m.role === 'user');
     if (firstUser && onNewTitle) {
-      hasReportedTitle.current = true;
       onNewTitle(firstUser.content.slice(0, 40));
     }
-  }, [messages, onNewTitle]);
+  }, [streaming, messages, onNewTitle]);
 
   function patchMsg(id: string, fn: (m: Msg) => Msg) {
     setMessages((prev) => prev.map((m) => (m.id === id ? fn(m) : m)));
