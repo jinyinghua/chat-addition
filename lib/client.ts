@@ -171,3 +171,41 @@ export function imageFileUrl(jobId: string, index: number): string {
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+// ================================================================
+// 聊天历史 API (云端数据库)
+// ================================================================
+
+export interface ChatHistoryItem {
+  id: string;
+  title: string;
+  time: number;
+}
+
+/** 获取聊天历史列表 */
+export async function fetchChatHistory(key: string): Promise<ChatHistoryItem[]> {
+  const res = await fetch('/v1/chat/history', { headers: authHeaders(key) });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/** 新增/更新一条历史记录 */
+export async function saveChatHistory(key: string, item: ChatHistoryItem): Promise<ChatHistoryItem[]> {
+  const res = await fetch('/v1/chat/history', {
+    method: 'POST',
+    headers: authHeaders(key, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(item),
+  });
+  if (!res.ok) throw new Error('Failed to save chat history');
+  return res.json();
+}
+
+/** 删除一条历史记录 */
+export async function deleteChatHistory(key: string, id: string): Promise<ChatHistoryItem[]> {
+  const res = await fetch(`/v1/chat/history/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: authHeaders(key),
+  });
+  if (!res.ok) throw new Error('Failed to delete chat history');
+  return res.json();
+}

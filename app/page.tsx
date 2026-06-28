@@ -7,6 +7,10 @@ import {
   THEME_STORAGE,
   TEXT_MODELS,
   IMAGE_MODELS,
+  fetchChatHistory,
+  saveChatHistory,
+  deleteChatHistory,
+  type ChatHistoryItem,
   type ThemeName,
 } from '@/lib/client';
 import { ThemeToggle } from './components/ui';
@@ -43,7 +47,7 @@ export default function Page() {
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
   // 聊天历史
-  const [chatHistory, setChatHistory] = useState<{ id: string; title: string; time: number }[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [chatKey, setChatKey] = useState(0); // 切换会话来强制刷新 ChatTab
 
   // 初始化
@@ -53,13 +57,13 @@ export default function Page() {
     if (savedKey) setKey(savedKey);
     const savedTheme = (localStorage.getItem(THEME_STORAGE) as ThemeName) || 'aurora';
     setTheme(savedTheme);
-    
-    // 恢复聊天历史
-    try {
-      const raw = localStorage.getItem('ca_chat_history');
-      if (raw) setChatHistory(JSON.parse(raw));
-    } catch { /* ignore */ }
   }, []);
+
+  // key 就绪后从云端加载聊天历史
+  useEffect(() => {
+    if (!mounted || !key) return;
+    fetchChatHistory(key).then(setChatHistory).catch(() => {});
+  }, [mounted, key]);
 
   // 主题持久化
   useEffect(() => {
@@ -67,12 +71,6 @@ export default function Page() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem(THEME_STORAGE, theme);
   }, [theme, mounted]);
-
-  // 聊天历史持久化
-  useEffect(() => {
-    if (!mounted || chatHistory.length === 0) return;
-    localStorage.setItem('ca_chat_history', JSON.stringify(chatHistory));
-  }, [chatHistory, mounted]);
 
   // 点击外部关闭 popup
   useEffect(() => {
@@ -112,15 +110,24 @@ export default function Page() {
     setHistoryOpen(false);
   }
 
-  function addToHistory(title: string) {
-    setChatHistory((prev) => {
-      const id = Date.now().toString(36);
-      return [{ id, title, time: Date.now() }, ...prev.slice(0, 19)]; // 最多 20 条
-    });
+  async function addToHistory(title: string) {
+    const item: ChatHistoryItem = { id: Date.now().toString(36), title, time: Date.now() };
+    setChatHistory((prev) => [item, ...prev.slice(0, 49)]);
+    try {
+      await saveChatHistory(key, item);
+    } catch { /* ignore */ }
+  }
+
+  async function removeHistory(id: string) {
+    setChatHistory((prev) => prev.filter((h) => h.id !== id));
+    try {
+      await deleteChatHistory(key, id);
+    } catch { /* ignore */ }
   }
 
   function logout() {
     setSettingsOpen(false);
+    setHistoryOpen(false);
     setStoredKey('');
     setKey('');
   }
@@ -168,18 +175,28 @@ export default function Page() {
         )}
 
         {chatHistory.map((h) => (
-          <div
-            key={h.id}
-            className="history-item"
-            onClick={() => {
-              setChatKey((k) => k + 1);
-              setHistoryOpen(false);
-            }}
-          >
-            <p className="truncate text-sm">{h.title}</p>
-            <p className="text-xs text-muted mt-1">
-              {new Date(h.time).toLocaleDateString()}
-            </p>
+          <div key={h.id} className="history-item group">
+            <div
+              className="flex-1 cursor-pointer"
+              onClick={() => {
+                setChatKey((k) => k + 1);
+                setHistoryOpen(false);
+              }}
+            >
+              <p className="truncate text-sm">{h.title}</p>
+              <p className="text-xs text-muted mt-1">
+                {new Date(h.time).toLocaleDateString()}
+              </p>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); removeHistory(h.id); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 flex items-center justify-center rounded-full text-muted hover:text-danger hover:bg-danger/10"
+              title="Delete"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         ))}
       </aside>
@@ -370,7 +387,8 @@ export default function Page() {
           margin-bottom: 8px;
           border-radius: 16px;
           cursor: pointer;
-          transition: 0.2s;
+          position: relative;
+          transition: background 0.2s;
         }
         .history-item:hover {
           background: rgba(255, 255, 255, 0.08);
