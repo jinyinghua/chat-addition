@@ -40,7 +40,7 @@ export function SmokeCanvas() {
     // ---- 状态 ----
     type State = 'normal' | 'scatter' | 'attract';
     let smokeState: State = 'normal';
-    let activeRect: DOMRect | null = null;
+    let activeElement: HTMLElement | null = null;
 
     const onBlur = () => { smokeState = 'scatter'; };
     const onFocus = () => { smokeState = 'normal'; };
@@ -59,7 +59,7 @@ export function SmokeCanvas() {
       const target = (e.target as HTMLElement).closest('.interactive-capsule') as HTMLElement | null;
       if (target) {
         smokeState = 'attract';
-        activeRect = target.getBoundingClientRect();
+        activeElement = target;
       }
     };
     const onMouseOut = (e: MouseEvent) => {
@@ -68,7 +68,7 @@ export function SmokeCanvas() {
       const related = (e.relatedTarget as HTMLElement)?.closest('.interactive-capsule');
       if (!related) {
         smokeState = 'normal';
-        activeRect = null;
+        activeElement = null;
       }
     };
     document.addEventListener('mouseover', onMouseOver);
@@ -151,13 +151,14 @@ export function SmokeCanvas() {
         const t = (i / numParticles + globalOffset) % 1;
         let tx: number, ty: number;
 
-        if (smokeState === 'attract' && activeRect) {
-          // 吸附态：精确包裹胶囊
-          const cx = activeRect.left + activeRect.width / 2;
-          const cy = activeRect.top + activeRect.height / 2;
-          const pad = 24; // 比胶囊大一圈
-          const wrappedW = activeRect.width + pad * 2;
-          const wrappedH = activeRect.height + pad * 2;
+        if (smokeState === 'attract' && activeElement) {
+          // 吸附态：每帧实时读取元素位置，跟随滚动/移动
+          const r = activeElement.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const pad = 24;
+          const wrappedW = r.width + pad * 2;
+          const wrappedH = r.height + pad * 2;
           const wrappedR = Math.min(wrappedW, wrappedH) / 2;
           const pt = getRoundedRectPoint(cx, cy, wrappedW, wrappedH, wrappedR, t);
           tx = pt.x;
