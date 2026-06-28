@@ -113,8 +113,13 @@ export default function Page() {
   async function openHistory(h: ChatHistoryItem) {
     setInitialMessages(undefined); // 先清除，触发 loading
     // 从云端获取完整数据（含 messages）
-    const full = await fetchChatHistoryById(key, h.id);
-    const msgs = full?.messages || [];
+    let msgs: ChatHistoryMessage[] = [];
+    try {
+      const full = await fetchChatHistoryById(key, h.id);
+      msgs = full?.messages || [];
+    } catch (e) {
+      console.warn('[openHistory] fetch failed', e);
+    }
     setActiveHistoryId(h.id);
     setInitialMessages(msgs);
     currentMessagesRef.current = msgs;
@@ -571,7 +576,7 @@ function LoginGate({
         <div className="absolute w-[600px] h-[600px] bg-neural-gradient rounded-full blur-[120px] animate-pulse" style={{ animationDuration: '8s' }} />
       </div>
       <div className="absolute right-6 top-6 z-10">
-        <ThemeToggle theme={theme} onToggle={onThemeToggle} />
+        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
       </div>
       <div className="w-full max-w-[400px] z-10 animate-fade-in">
         <div className="mb-10 text-center">

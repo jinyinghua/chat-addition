@@ -59,7 +59,7 @@ export function ChatTab({
   // 通知父组件消息变化
   useEffect(() => {
     if (onMessagesChange && messages.length > 0) {
-      onMessagesChange(messages.map(({ id, role, content, images, error }) => ({ id, role, content, images, error })));
+      onMessagesChange(messages.map(({ id, role, content, images, error }) => ({ id, role: role as "user" | "assistant", content, images, error })));
     }
   }, [messages, onMessagesChange]);
 

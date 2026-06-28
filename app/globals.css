@@ -8,8 +8,8 @@
    ============================================================ */
 :root,
 [data-theme='aurora'] {
-  --font-sans: var(--font-outfit), 'Google Sans', 'SF Pro Rounded', system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains-mono), 'SF Mono', ui-monospace, monospace;
+  --font-sans: "Outfit", 'Google Sans', 'SF Pro Rounded', system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", 'SF Mono', ui-monospace, monospace;
 
   --bg: #0f1115;
   --surface: #17191f;
