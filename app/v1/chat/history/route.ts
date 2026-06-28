@@ -1,27 +1,36 @@
 /**
- * GET  /v1/chat/history  — 获取当前用户的聊天历史列表
- * POST /v1/chat/history  — 创建/更新一条历史记录
- *       body: { id, title, time }
- * DELETE /v1/chat/history — 清空所有历史
+ * GET  /v1/chat/history       — 获取聊天历史列表
+ * POST /v1/chat/history       — 创建/更新一条历史（含 messages）
+ * DELETE /v1/chat/history     — 清空所有历史
  */
 import { requireApiKey, getAuthTokenFromRequest } from '@/lib/session-manager';
-import { hashApiKey, getHistory, upsertHistory, clearHistory, type ChatHistoryItem } from '@/lib/chat-history-store';
+import { hashApiKey, getHistory, getHistoryById, upsertHistory, clearHistory, type ChatHistoryItem } from '@/lib/chat-history-store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-/** 获取历史列表 */
 export async function GET(request: Request) {
   const authErr = requireApiKey(request);
   if (authErr) return authErr;
 
   const token = getAuthTokenFromRequest(request);
   const keyHash = hashApiKey(token);
+
+  // 支持 ?id=xxx 查询单条历史（含 messages）
+  const url = new URL(request.url);
+  const singleId = url.searchParams.get('id');
+  if (singleId) {
+    const item = await getHistoryById(keyHash, singleId);
+    if (!item) {
+      return Response.json({ error: 'not found' }, { status: 404 });
+    }
+    return Response.json(item);
+  }
+
   const list = await getHistory(keyHash);
   return Response.json(list);
 }
 
-/** 新增/更新一条历史 */
 export async function POST(request: Request) {
   const authErr = requireApiKey(request);
   if (authErr) return authErr;
@@ -44,7 +53,6 @@ export async function POST(request: Request) {
   return Response.json(list);
 }
 
-/** 清空历史 */
 export async function DELETE(request: Request) {
   const authErr = requireApiKey(request);
   if (authErr) return authErr;

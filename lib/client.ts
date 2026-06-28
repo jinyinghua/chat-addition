@@ -29,7 +29,6 @@ export function isImageModel(model: string): boolean {
   return IMAGE_MODELS.some((m) => m.id === model.toLowerCase());
 }
 
-/** 读取已保存的 API Key（sessionStorage）。 */
 export function getStoredKey(): string {
   if (typeof window === 'undefined') return '';
   return window.sessionStorage.getItem(KEY_STORAGE) || '';
@@ -41,7 +40,6 @@ export function setStoredKey(key: string) {
   else window.sessionStorage.removeItem(KEY_STORAGE);
 }
 
-/** 构建带鉴权的 headers（Bearer）。 */
 export function authHeaders(key: string, extra: Record<string, string> = {}): HeadersInit {
   return {
     Authorization: `Bearer ${key}`,
@@ -53,12 +51,6 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 
 export type ApiError = Error & { status?: number; code?: string };
 
-/**
- * 后端有 3 种错误返回格式，统一提取为人类可读字符串 + 错误对象。
- *   1. OpenAI 风格：{ error: { message, type, code } }
- *   2. FastAPI 风格：{ detail: "..." }
- *   3. 裸字符串：{ error: "invalid_key" }
- */
 export function extractError(data: unknown, fallback = '请求失败'): string {
   if (!data || typeof data !== 'object') return fallback;
   const obj = data as Record<string, unknown>;
@@ -73,7 +65,6 @@ export function extractError(data: unknown, fallback = '请求失败'): string {
   return fallback;
 }
 
-/** 将 fetch 响应统一抛出为 ApiError。 */
 export async function throwIfError(res: Response, fallback: string): Promise<void> {
   if (res.ok) return;
   let msg = fallback;
@@ -81,20 +72,13 @@ export async function throwIfError(res: Response, fallback: string): Promise<voi
     const data = await res.json();
     msg = extractError(data, fallback);
   } catch {
-    // 响应非 JSON
+    // non-JSON response
   }
   const err = new Error(msg) as ApiError;
   err.status = res.status;
   throw err;
 }
 
-/**
- * 解析 SSE 流：逐行读取 `data: <payload>`，对每个 JSON payload 调用 onChunk，
- * 遇到 `data: [DONE]` 结束。同时把 error 格式数据回调出去。
- *
- * 兼容 OpenAI chat completion chunk 格式：
- *   { choices: [{ delta: { content } }] }
- */
 export async function streamChatCompletion(
   res: Response,
   onDelta: (text: string) => void,
@@ -131,7 +115,7 @@ export async function streamChatCompletion(
             onDelta(delta.content);
           }
         } catch {
-          // 忽略无法解析的行
+          // ignore unparseable lines
         }
       }
     }
@@ -140,7 +124,6 @@ export async function streamChatCompletion(
   }
 }
 
-/** 从可能含 markdown 图片的文本中提取图片 URL。 */
 export function extractImageUrls(markdown: string): string[] {
   const urls: string[] = [];
   const re = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g;
@@ -151,7 +134,6 @@ export function extractImageUrls(markdown: string): string[] {
   return urls;
 }
 
-/** 图片任务元信息（GET /v1/images/jobs/:id 返回）。 */
 export type ImageJobStatus = {
   id: string;
   status: 'queued' | 'running' | 'succeeded' | 'failed';
@@ -162,18 +144,16 @@ export type ImageJobStatus = {
   asset_count?: number;
 };
 
-/** 生成图片代理文件 URL（接口公开，无需鉴权）。 */
 export function imageFileUrl(jobId: string, index: number): string {
   return `/v1/images/jobs/${jobId}/files/${index}`;
 }
 
-/** sleep 工具。 */
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
 // ================================================================
-// 聊天历史 API (云端数据库)
+// 聊天历史 API (云端数据库，含消息)
 // ================================================================
 
 export interface ChatHistoryMessage {
@@ -191,14 +171,21 @@ export interface ChatHistoryItem {
   messages?: ChatHistoryMessage[];
 }
 
-/** 获取聊天历史列表 */
+/** 获取聊天历史列表（不含消息体，仅用于侧栏展示） */
 export async function fetchChatHistory(key: string): Promise<ChatHistoryItem[]> {
   const res = await fetch('/v1/chat/history', { headers: authHeaders(key) });
   if (!res.ok) return [];
   return res.json();
 }
 
-/** 新增/更新一条历史记录 */
+/** 根据 id 加载单条历史（含 messages） */
+export async function fetchChatHistoryById(key: string, id: string): Promise<ChatHistoryItem | null> {
+  const res = await fetch(`/v1/chat/history?id=${encodeURIComponent(id)}`, { headers: authHeaders(key) });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+/** 新增/更新一条历史记录（含 messages） */
 export async function saveChatHistory(key: string, item: ChatHistoryItem): Promise<ChatHistoryItem[]> {
   const res = await fetch('/v1/chat/history', {
     method: 'POST',

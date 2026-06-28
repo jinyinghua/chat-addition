@@ -8,23 +8,17 @@ import {
   TEXT_MODELS,
   IMAGE_MODELS,
   fetchChatHistory,
+  fetchChatHistoryById,
   saveChatHistory,
   deleteChatHistory,
   type ChatHistoryItem,
+  type ChatHistoryMessage,
   type ThemeName,
 } from '@/lib/client';
 import { ThemeToggle } from './components/ui';
 import { ChatTab } from './components/ChatTab';
 import { AdminTab } from './components/AdminTab';
 import { SmokeCanvas } from './components/SmokeCanvas';
-
-/* ================================================================
-   page.tsx — Google Neural Expressive 布局 (完全参照你的 HTML)
-   - 左侧可折叠历史记录 (Timeline)
-   - 左上角悬浮胶囊控制区 (菜单 · 模型 · 设置)
-   - 设置弹出面板 (Admin / API Docs / 明暗切换 / 登出)
-   - 核心聊天区 (自适应宽度)
-   ================================================================ */
 
 type SettingsSection = 'admin' | 'prefs';
 
@@ -40,14 +34,17 @@ export default function Page() {
   const settingsRef = useRef<HTMLDivElement>(null);
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
 
-  // 模型 & 图片参数 (传给 ChatTab)
+  // 模型 & 图片参数
   const [model, setModel] = useState('gpt-5.4-mini');
   const [showModelMenu, setShowModelMenu] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
-  // 聊天历史
+  // 聊天历史列表 + 当前活跃会话
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
-  const [chatKey, setChatKey] = useState(0); // 切换会话来强制刷新 ChatTab
+  const [chatKey, setChatKey] = useState(0);
+  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  const [initialMessages, setInitialMessages] = useState<ChatHistoryMessage[] | undefined>(undefined);
+  const currentMessagesRef = useRef<ChatHistoryMessage[]>([]);
 
   // 初始化
   useEffect(() => {
@@ -103,22 +100,65 @@ export default function Page() {
   const allModels = [...TEXT_MODELS, ...IMAGE_MODELS];
   const currentModelLabel = allModels.find((m) => m.id === model)?.label || model;
 
+  /** 新建空白会话 */
   function newChat() {
-    // 保存当前会话到历史（通过 ChatTab 的 ref 或事件）
+    setActiveHistoryId(null);
+    setInitialMessages(undefined);
+    currentMessagesRef.current = [];
     setChatKey((k) => k + 1);
     setHistoryOpen(false);
   }
 
-  async function addToHistory(title: string) {
-    const item: ChatHistoryItem = { id: Date.now().toString(36), title, time: Date.now() };
-    setChatHistory((prev) => [item, ...prev.slice(0, 49)]);
+  /** 点击历史记录：加载该会话的消息 */
+  async function openHistory(h: ChatHistoryItem) {
+    setInitialMessages(undefined); // 先清除，触发 loading
+    // 从云端获取完整数据（含 messages）
+    const full = await fetchChatHistoryById(key, h.id);
+    const msgs = full?.messages || [];
+    setActiveHistoryId(h.id);
+    setInitialMessages(msgs);
+    currentMessagesRef.current = msgs;
+    setChatKey((k) => k + 1);
+    setHistoryOpen(false);
+  }
+
+  /** 保存当前会话到历史（含消息） */
+  async function saveCurrentHistory(title: string) {
+    const id = activeHistoryId || Date.now().toString(36);
+    const item: ChatHistoryItem = {
+      id,
+      title,
+      time: Date.now(),
+      messages: currentMessagesRef.current,
+    };
+    // 更新本地列表
+    setChatHistory((prev) => {
+      const idx = prev.findIndex((h) => h.id === id);
+      if (idx >= 0) {
+        const updated = [...prev];
+        updated[idx] = item;
+        return updated;
+      }
+      return [item, ...prev.slice(0, 49)];
+    });
+    if (!activeHistoryId) setActiveHistoryId(id);
     try {
       await saveChatHistory(key, item);
     } catch { /* ignore */ }
   }
 
+  /** ChatTab 回调：消息变化时更新 ref */
+  function handleMessagesChange(msgs: ChatHistoryMessage[]) {
+    currentMessagesRef.current = msgs;
+  }
+
   async function removeHistory(id: string) {
     setChatHistory((prev) => prev.filter((h) => h.id !== id));
+    if (activeHistoryId === id) {
+      setActiveHistoryId(null);
+      setInitialMessages(undefined);
+      currentMessagesRef.current = [];
+    }
     try {
       await deleteChatHistory(key, id);
     } catch { /* ignore */ }
@@ -151,14 +191,12 @@ export default function Page() {
 
   return (
     <div className="app-container">
-      {/* 生命体烟雾背景 */}
       <SmokeCanvas />
 
       {/* ============ 左侧可折叠历史记录 ============ */}
       <aside className={`history-sidebar ${historyOpen ? 'open' : ''}`}>
         <div className="history-title">Timeline</div>
 
-        {/* 新会话按钮 */}
         <button
           onClick={newChat}
           className="flex items-center gap-2 w-full px-3 py-3 mb-3 rounded-2xl text-sm font-medium text-accent hover:bg-surface-2 transition-colors"
@@ -169,18 +207,25 @@ export default function Page() {
           New Chat
         </button>
 
+        {/* 当前活跃会话指示 */}
+        {activeHistoryId && (
+          <p className="text-xs text-accent/70 px-2 mb-2 font-medium">
+            ● 当前会话
+          </p>
+        )}
+
         {chatHistory.length === 0 && (
           <p className="text-xs text-muted px-2 py-6 text-center">No conversations yet</p>
         )}
 
         {chatHistory.map((h) => (
-          <div key={h.id} className="history-item group">
+          <div
+            key={h.id}
+            className={`history-item group ${activeHistoryId === h.id ? 'active' : ''}`}
+          >
             <div
               className="flex-1 cursor-pointer"
-              onClick={() => {
-                setChatKey((k) => k + 1);
-                setHistoryOpen(false);
-              }}
+              onClick={() => void openHistory(h)}
             >
               <p className="truncate text-sm">{h.title}</p>
               <p className="text-xs text-muted mt-1">
@@ -188,7 +233,7 @@ export default function Page() {
               </p>
             </div>
             <button
-              onClick={(e) => { e.stopPropagation(); removeHistory(h.id); }}
+              onClick={(e) => { e.stopPropagation(); void removeHistory(h.id); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 flex items-center justify-center rounded-full text-muted hover:text-danger hover:bg-danger/10"
               title="Delete"
             >
@@ -204,7 +249,6 @@ export default function Page() {
       <main className="main-chat">
         {/* ---- 左上角控制区 ---- */}
         <div className="top-controls">
-          {/* 菜单按钮 */}
           <button
             className="capsule icon-btn interactive-capsule"
             onClick={() => setHistoryOpen((v) => !v)}
@@ -217,7 +261,6 @@ export default function Page() {
             </svg>
           </button>
 
-          {/* 模型切换 */}
           <div className="relative" ref={modelMenuRef}>
             <button
               className="capsule model-switcher interactive-capsule"
@@ -229,7 +272,6 @@ export default function Page() {
               </svg>
             </button>
 
-            {/* 模型下拉菜单 */}
             {showModelMenu && (
               <div className="capsule absolute top-full left-0 mt-2 w-72 p-2 z-50 max-h-80 overflow-y-auto">
                 <p className="text-xs font-semibold text-muted uppercase tracking-wider px-3 py-2">Text Models</p>
@@ -262,7 +304,6 @@ export default function Page() {
             )}
           </div>
 
-          {/* 设置按钮 */}
           <button
             ref={settingsBtnRef}
             className="capsule icon-btn interactive-capsule"
@@ -275,10 +316,8 @@ export default function Page() {
             </svg>
           </button>
 
-          {/* ---- 设置面板 ---- */}
           {settingsOpen && (
             <div ref={settingsRef} className="capsule settings-popup open">
-              {/* 导航标签 */}
               <div className="flex gap-1 mb-4 p-1 bg-surface-2 rounded-2xl">
                 {([
                   { key: 'prefs' as const, label: 'Preferences' },
@@ -298,7 +337,6 @@ export default function Page() {
                 ))}
               </div>
 
-              {/* 内容区 */}
               <div className="overflow-y-auto max-h-[60vh]">
                 {settingsSection === 'prefs' && (
                   <div className="space-y-4">
@@ -331,13 +369,17 @@ export default function Page() {
         </div>
 
         {/* ---- 对话流 ---- */}
-        <ChatTab key={chatKey} apiKey={key} model={model} onNewTitle={addToHistory} />
+        <ChatTab
+          key={chatKey}
+          apiKey={key}
+          model={model}
+          onNewTitle={saveCurrentHistory}
+          onMessagesChange={handleMessagesChange}
+          initialMessages={initialMessages}
+        />
       </main>
 
       <style jsx global>{`
-        /* ================================================================
-           页面布局专用样式 (参照 HTML 的 Google Neural Expressive 布局)
-           ================================================================ */
         .app-container {
           position: relative;
           z-index: 10;
@@ -346,7 +388,6 @@ export default function Page() {
           height: 100vh;
         }
 
-        /* 左侧可折叠历史记录 */
         .history-sidebar {
           flex-shrink: 0;
           width: 280px;
@@ -388,11 +429,14 @@ export default function Page() {
         .history-item:hover {
           background: rgba(255, 255, 255, 0.08);
         }
+        .history-item.active {
+          background: var(--accent-soft);
+          border: 1px solid var(--accent);
+        }
         [data-theme='daylight'] .history-item:hover {
           background: rgba(0, 0, 0, 0.05);
         }
 
-        /* 主聊天区 */
         .main-chat {
           flex: 1;
           position: relative;
@@ -401,7 +445,6 @@ export default function Page() {
           min-width: 0;
         }
 
-        /* 通用悬浮胶囊 */
         .capsule {
           background: rgba(26, 26, 30, 0.9);
           border: 1px solid rgba(255, 255, 255, 0.12);
@@ -415,7 +458,6 @@ export default function Page() {
           border-color: rgba(0, 0, 0, 0.08);
           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
         }
-
         .capsule:hover {
           border-color: rgba(255, 255, 255, 0.28);
         }
@@ -423,7 +465,6 @@ export default function Page() {
           border-color: rgba(0, 0, 0, 0.15);
         }
 
-        /* 左上角控制区 */
         .top-controls {
           position: absolute;
           top: 24px;
@@ -458,7 +499,6 @@ export default function Page() {
           color: var(--fg);
         }
 
-        /* 设置面板 */
         .settings-popup {
           position: absolute;
           top: 60px;
@@ -482,9 +522,6 @@ export default function Page() {
   );
 }
 
-/* ================================================================
-   LoginGate
-   ================================================================ */
 function LoginGate({
   onLogin,
   theme,
@@ -534,7 +571,7 @@ function LoginGate({
         <div className="absolute w-[600px] h-[600px] bg-neural-gradient rounded-full blur-[120px] animate-pulse" style={{ animationDuration: '8s' }} />
       </div>
       <div className="absolute right-6 top-6 z-10">
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <ThemeToggle theme={theme} onToggle={onThemeToggle} />
       </div>
       <div className="w-full max-w-[400px] z-10 animate-fade-in">
         <div className="mb-10 text-center">

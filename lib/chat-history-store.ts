@@ -9,7 +9,6 @@ import crypto from 'node:crypto';
 
 const DATA_DIR = process.env.DATA_DIR || '/tmp/chat-addition';
 
-// 每个 API Key 一个历史档案，key 为 sha256 前缀
 function historyFile(keyHash: string) {
   return path.join(DATA_DIR, `chat-history-${keyHash}.json`);
 }
@@ -33,15 +32,23 @@ function ensureDataDir() {
   try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { /* ignore */ }
 }
 
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  images?: string[];
+  error?: string;
+}
+
 export interface ChatHistoryItem {
   id: string;
   title: string;
   time: number; // unix ms
+  messages?: ChatMessage[];
 }
 
 type StoreData = ChatHistoryItem[];
 
-/** 从持久化存储读取历史列表 */
 async function readStore(keyHash: string): Promise<StoreData> {
   const redis = getRedis();
   if (redis) {
@@ -52,19 +59,17 @@ async function readStore(keyHash: string): Promise<StoreData> {
       console.warn('[ChatHistory] redis read failed:', e);
     }
   }
-  // fallback: file
   try {
     ensureDataDir();
     const content = fs.readFileSync(historyFile(keyHash), 'utf-8');
     const parsed = JSON.parse(content);
     if (Array.isArray(parsed)) return parsed;
   } catch {
-    // 文件不存在或解析失败
+    // file not found or parse error
   }
   return [];
 }
 
-/** 写入持久化存储 */
 async function writeStore(keyHash: string, data: StoreData) {
   const redis = getRedis();
   if (redis) {
@@ -75,22 +80,25 @@ async function writeStore(keyHash: string, data: StoreData) {
       console.warn('[ChatHistory] redis write failed:', e);
     }
   }
-  // fallback: file
   ensureDataDir();
   fs.writeFileSync(historyFile(keyHash), JSON.stringify(data, null, 2), 'utf-8');
 }
 
-/** 通过 API Key 计算 namespace */
 export function hashApiKey(key: string): string {
   return crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 
-/** 获取历史列表 */
 export async function getHistory(keyHash: string): Promise<ChatHistoryItem[]> {
   return readStore(keyHash);
 }
 
-/** 创建或更新一条历史记录（去重 id） */
+/** 根据 id 获取单条历史（含消息） */
+export async function getHistoryById(keyHash: string, id: string): Promise<ChatHistoryItem | null> {
+  const list = await readStore(keyHash);
+  return list.find((h) => h.id === id) || null;
+}
+
+/** 创建或更新一条历史记录（去重 id，保留 messages） */
 export async function upsertHistory(keyHash: string, item: ChatHistoryItem): Promise<ChatHistoryItem[]> {
   const list = await readStore(keyHash);
   const idx = list.findIndex((h) => h.id === item.id);
@@ -99,13 +107,11 @@ export async function upsertHistory(keyHash: string, item: ChatHistoryItem): Pro
   } else {
     list.unshift(item);
   }
-  // 最多保留 50 条
   const trimmed = list.slice(0, 50);
   await writeStore(keyHash, trimmed);
   return trimmed;
 }
 
-/** 删除一条历史记录 */
 export async function deleteHistory(keyHash: string, id: string): Promise<ChatHistoryItem[]> {
   const list = await readStore(keyHash);
   const filtered = list.filter((h) => h.id !== id);
@@ -113,7 +119,6 @@ export async function deleteHistory(keyHash: string, id: string): Promise<ChatHi
   return filtered;
 }
 
-/** 清空全部历史 */
 export async function clearHistory(keyHash: string): Promise<ChatHistoryItem[]> {
   await writeStore(keyHash, []);
   return [];
