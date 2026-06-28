@@ -176,10 +176,19 @@ export function sleep(ms: number): Promise<void> {
 // 聊天历史 API (云端数据库)
 // ================================================================
 
+export interface ChatHistoryMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  images?: string[];
+  error?: string;
+}
+
 export interface ChatHistoryItem {
   id: string;
   title: string;
   time: number;
+  messages?: ChatHistoryMessage[];
 }
 
 /** 获取聊天历史列表 */

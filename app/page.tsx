@@ -16,7 +16,6 @@ import {
 import { ThemeToggle } from './components/ui';
 import { ChatTab } from './components/ChatTab';
 import { AdminTab } from './components/AdminTab';
-import { DocsTab } from './components/DocsTab';
 import { SmokeCanvas } from './components/SmokeCanvas';
 
 /* ================================================================
@@ -27,7 +26,7 @@ import { SmokeCanvas } from './components/SmokeCanvas';
    - 核心聊天区 (自适应宽度)
    ================================================================ */
 
-type SettingsSection = 'admin' | 'api' | 'prefs';
+type SettingsSection = 'admin' | 'prefs';
 
 export default function Page() {
   const [mounted, setMounted] = useState(false);
@@ -282,9 +281,8 @@ export default function Page() {
               {/* 导航标签 */}
               <div className="flex gap-1 mb-4 p-1 bg-surface-2 rounded-2xl">
                 {([
-                  { key: 'prefs' as const, label: 'Preferences', icon: '⚙' },
-                  { key: 'admin' as const, label: 'Admin', icon: '👥' },
-                  { key: 'api' as const, label: 'API Docs', icon: '📄' },
+                  { key: 'prefs' as const, label: 'Preferences' },
+                  { key: 'admin' as const, label: 'Admin' },
                 ]).map((tab) => (
                   <button
                     key={tab.key}
@@ -295,7 +293,7 @@ export default function Page() {
                         : 'text-muted hover:text-fg'
                     }`}
                   >
-                    {tab.icon} {tab.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -323,14 +321,8 @@ export default function Page() {
                 )}
 
                 {settingsSection === 'admin' && (
-                  <div className="-mx-2">
+                  <div>
                     <AdminTab apiKey={key} />
-                  </div>
-                )}
-
-                {settingsSection === 'api' && (
-                  <div className="-mx-1">
-                    <DocsTab />
                   </div>
                 )}
               </div>
@@ -370,6 +362,9 @@ export default function Page() {
           padding: 24px 16px;
           z-index: 50;
         }
+        [data-theme='daylight'] .history-sidebar {
+          background: rgba(255, 255, 255, 0.8);
+        }
         .history-sidebar.open {
           margin-left: 0;
         }
@@ -392,6 +387,9 @@ export default function Page() {
         }
         .history-item:hover {
           background: rgba(255, 255, 255, 0.08);
+        }
+        [data-theme='daylight'] .history-item:hover {
+          background: rgba(0, 0, 0, 0.05);
         }
 
         /* 主聊天区 */
@@ -465,10 +463,10 @@ export default function Page() {
           position: absolute;
           top: 60px;
           left: 0;
-          width: 420px;
-          max-width: calc(100vw - 48px);
+          width: 540px;
+          max-width: calc(100vw - 72px);
           border-radius: 24px;
-          padding: 20px;
+          padding: 28px;
           opacity: 0;
           pointer-events: none;
           transform: translateY(-10px) scale(0.95);

@@ -31,12 +31,16 @@ export function ChatTab({
   apiKey,
   model,
   onNewTitle,
+  onMessagesChange,
+  initialMessages,
 }: {
   apiKey: string;
   model: string;
   onNewTitle?: (title: string) => void;
+  onMessagesChange?: (messages: { id: string; role: 'user' | 'assistant'; content: string; images?: string[]; error?: string }[]) => void;
+  initialMessages?: { id: string; role: 'user' | 'assistant'; content: string; images?: string[]; error?: string }[];
 }) {
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(initialMessages || []);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -51,6 +55,13 @@ export function ChatTab({
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
   }, [messages]);
+
+  // 通知父组件消息变化
+  useEffect(() => {
+    if (onMessagesChange && messages.length > 0) {
+      onMessagesChange(messages.map(({ id, role, content, images, error }) => ({ id, role, content, images, error })));
+    }
+  }, [messages, onMessagesChange]);
 
   // 首次对话记录标题
   useEffect(() => {
@@ -216,11 +227,6 @@ export function ChatTab({
         {messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center h-full">
             <div className="text-center max-w-md animate-fade-in px-4">
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-neural-gradient text-white shadow-glow">
-                <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-                </svg>
-              </div>
               <h2 className="text-2xl font-medium text-fg mb-3">Hello, how can I help?</h2>
               <p className="text-base text-muted">
                 {isImg ? 'Describe an image you want to generate.' : 'Select a model and start chatting.'}
@@ -350,11 +356,18 @@ export function ChatTab({
           backdrop-filter: blur(30px);
           -webkit-backdrop-filter: blur(30px);
           box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+          transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
         }
         [data-theme='daylight'] .capsule {
           background: rgba(255, 255, 255, 0.85);
           border-color: rgba(0, 0, 0, 0.08);
           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        }
+        .capsule:hover {
+          border-color: rgba(255, 255, 255, 0.28);
+        }
+        [data-theme='daylight'] .capsule:hover {
+          border-color: rgba(0, 0, 0, 0.15);
         }
       `}</style>
     </>

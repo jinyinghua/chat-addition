@@ -135,7 +135,7 @@ const MODELS_DOC = `| 模型 | 类型 | 说明 |
 
 export function DocsTab() {
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-full space-y-4">
       {/* 鉴权说明 */}
       <Card className="p-5">
         <h2 className="mb-2 flex items-center gap-2 text-lg font-semibold text-fg">

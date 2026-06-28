@@ -149,7 +149,7 @@ export function AdminTab({ apiKey }: { apiKey: string }) {
   const sessions = status?.sessions || [];
 
   return (
-    <div className="relative mx-auto max-w-6xl">
+    <div className="relative mx-auto max-w-full">
       {/* Toast */}
       <div className="fixed top-20 right-6 z-50 flex flex-col gap-2">
         {toasts.map((t) => (
